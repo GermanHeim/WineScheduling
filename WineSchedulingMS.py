@@ -3,6 +3,13 @@ Wine Scheduling Optimization Model
 
 This script defines the wine scheduling optimization model using Pyomo,
 loading parameters the TOML file.
+
+This model minimizes the makespan of wine production tasks while adhering to
+various operational constraints such as task sequencing, storage capacities,
+and demand fulfillment.
+
+It also has penalties to encourage efficient use of storage tanks and minimize air
+in tanks.
 """
 
 # pyright: reportAttributeAccessIssue=false
