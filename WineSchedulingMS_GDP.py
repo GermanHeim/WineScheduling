@@ -1,0 +1,792 @@
+"""
+Wine Scheduling Optimization Model using Pyomo GDP
+
+This script defines the wine scheduling optimization model using Pyomo GDP
+(Generalized Disjunctive Programming) to replace Big-M constraints,
+improving readability and potentially numerical stability.
+"""
+
+import pyomo.environ as pyo
+import pyomo.gdp as gdp
+import tomllib
+from pyomo.opt import SolverFactory
+
+
+def create_wine_scheduling_model(toml_file="parametersMS.toml"):
+    """Create and return the wine scheduling optimization model with GDP"""
+
+    # Load parameters from TOML file
+    with open(toml_file, "rb") as f:
+        params = tomllib.load(f)
+
+    model = pyo.ConcreteModel(name="WineSchedulingGDP")
+
+    # ========================================
+    # SETS
+    # ========================================
+
+    # Generate tasks from lines
+    lines = params["lines"]["idx"]
+    tasks = []
+    for prefix in ["Fa", "Fl", "Fr", "Alm"]:
+        for line in lines:
+            tasks.append(f"{prefix}{line}")
+
+    model.i = pyo.Set(initialize=tasks)
+    model.ist = pyo.Set(initialize=["Alm2", "Alm3", "Alm5"])
+    model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])
+    model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Fr")])
+    model.inpst = pyo.Set(initialize=[t for t in tasks if t.startswith(("Fa", "Fl"))])
+
+    model.j = pyo.Set(
+        initialize=[
+            "inox5000",
+            "inox10000",
+            "inox17500",
+            "inox22000",
+            "subte6300",
+            "subte7500",
+            "subte9000",
+            "subte9500",
+            "subte12700",
+            "iso10000",
+            "iso5000",
+        ]
+    )
+
+    model.JST = pyo.Set(
+        initialize=[
+            "subte6300",
+            "subte7500",
+            "subte9000",
+            "subte9500",
+            "iso10000",
+            "iso5000",
+        ]
+    )
+
+    model.nJST = pyo.Param(initialize=len(model.JST))
+    model.inv_nJST = pyo.Param(initialize=1 / len(model.JST))
+
+    # Task-unit pairs (ij)
+    ij_data = []
+    for task in tasks:
+        prefix = ""
+        if task.startswith("Fa"):
+            prefix = "Fa"
+        elif task.startswith("Fl"):
+            prefix = "Fl"
+        elif task.startswith("Fr"):
+            prefix = "Fr"
+        elif task.startswith("Alm"):
+            prefix = "Alm"
+
+        if (
+            prefix in params["templates"]
+            and "compatible_units" in params["templates"][prefix]
+        ):
+            for unit in params["templates"][prefix]["compatible_units"]:
+                ij_data.append((task, unit))
+    model.ij = pyo.Set(initialize=ij_data, dimen=2)
+
+    model.n = pyo.Set(initialize=[1, 2, 3, 4, 5, 6, 7])
+
+    model.s = pyo.Set(
+        initialize=[
+            "s1",
+            "v1",
+            "vl1",
+            "p1",
+            "s2",
+            "v2",
+            "vl2",
+            "p2",
+            "s3",
+            "v3",
+            "vl3",
+            "p3",
+            "s4",
+            "v4",
+            "vl4",
+            "p4",
+            "s5",
+            "v5",
+            "vl5",
+            "p5",
+            "s6",
+            "v6",
+            "vl6",
+            "p6",
+            "dsch",
+        ]
+    )
+
+    # States logic
+    IPS_data = []
+    ICS_data = []
+    for task in tasks:
+        line = int(task[3:]) if task.startswith("Alm") else int(task[2:])
+        if task.startswith("Fa"):
+            ICS_data.append((task, f"s{line}"))
+            IPS_data.append((task, f"v{line}"))
+            IPS_data.append((task, "dsch"))
+        elif task.startswith("Fl"):
+            ICS_data.append((task, f"v{line}"))
+            IPS_data.append((task, f"vl{line}"))
+            IPS_data.append((task, "dsch"))
+        elif task.startswith("Fr"):
+            ICS_data.append((task, f"vl{line}"))
+            IPS_data.append((task, f"p{line}"))
+        elif task.startswith("Alm"):
+            ICS_data.append((task, f"p{line}"))
+            IPS_data.append((task, f"p{line}"))
+    model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
+    model.ICS = pyo.Set(initialize=ICS_data, dimen=2)
+
+    model.SR = pyo.Set(initialize=["s1", "s2", "s3", "s4", "s5", "s6"])
+    model.SP = pyo.Set(initialize=["dsch", "p1", "p2", "p3", "p4", "p5", "p6"])
+    model.SI = model.s - model.SP - model.SR
+    model.SFISEco = pyo.Set(initialize=["p2", "p3", "p5"])
+    model.SFISBar = pyo.Set(initialize=["p1", "p4", "p6"])
+    model.SZW = pyo.Set(initialize=["v1", "v2", "v3", "v4", "v5", "v6"])
+    model.SNIS = pyo.Set(initialize=["vl1", "vl2", "vl3", "vl4", "vl5", "vl6"])
+
+    tc1_data = [
+        ("Fa1", "Fl1"),
+        ("Fl1", "Fr1"),
+        ("Fa2", "Fl2"),
+        ("Fl2", "Fr2"),
+        ("Fa3", "Fl3"),
+        ("Fl3", "Fr3"),
+        ("Fa4", "Fl4"),
+        ("Fl4", "Fr4"),
+        ("Fa5", "Fl5"),
+        ("Fl5", "Fr5"),
+        ("Fa6", "Fl6"),
+        ("Fl6", "Fr6"),
+    ]
+    model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
+    tc2_data = [("Fr2", "Alm2"), ("Fr3", "Alm3"), ("Fr5", "Alm5")]
+    model.tc2 = pyo.Set(initialize=tc2_data, dimen=2)
+    model.prd = pyo.Set(
+        initialize=["Vino1", "Vino2", "Vino3", "Vino4", "Vino5", "Vino6"]
+    )
+
+    # ========================================
+    # PARAMETERS
+    # ========================================
+    model.iMax = pyo.Param(initialize=1)
+    model.jMax = pyo.Param(initialize=1)
+    model.jMin = pyo.Param(initialize=1)
+    model.iMaxST = pyo.Param(initialize=1)
+    model.jMaxST = pyo.Param(initialize=2)
+    model.jMinST = pyo.Param(initialize=1)
+    model.MustUseEcobulk = pyo.Param(initialize=0)
+
+    model.ST0 = pyo.Param(model.s, initialize=params["initial_inventory"], default=0)
+    model.STmax = pyo.Param(model.s, initialize=0)
+    model.alpha = pyo.Param(model.i, mutable=True, default=0)
+    model.beta = pyo.Param(model.i, mutable=True, default=0)
+    model.Bmin = pyo.Param(model.ij, mutable=True, default=0)
+    model.Bmax = pyo.Param(model.ij, mutable=True, default=0)
+
+    for task in model.i:
+        prefix = ""
+        if task.startswith("Fa"):
+            prefix = "Fa"
+        elif task.startswith("Fl"):
+            prefix = "Fl"
+        elif task.startswith("Fr"):
+            prefix = "Fr"
+        elif task.startswith("Alm"):
+            prefix = "Alm"
+
+        if prefix in params["templates"]:
+            template = params["templates"][prefix]
+            model.alpha[task] = template["alpha"]
+            model.beta[task] = template["beta"]
+            if "compatible_units" in template:
+                for unit, limits in template["compatible_units"].items():
+                    if (task, unit) in model.ij:
+                        model.Bmin[task, unit] = limits[0]
+                        model.Bmax[task, unit] = limits[1]
+
+    total = 0.0
+    for j in model.JST:
+        tank_count = 0
+        tank_range_sum = 0.0
+        for i in model.ist:
+            if (i, j) in model.ij:
+                tank_range_sum += pyo.value(model.Bmax[i, j]) - pyo.value(
+                    model.Bmin[i, j]
+                )
+                tank_count += 1
+        if tank_count > 0:
+            total += tank_range_sum / tank_count
+    total_avg_range_value = total if total > 0.0 else 1.0
+
+    model.H = pyo.Param(initialize=params["global"]["H"])
+
+    model.rhoIScons = pyo.Param(model.i, model.s, mutable=True, default=0)
+    model.rhoISprod = pyo.Param(model.i, model.s, mutable=True, default=0)
+
+    if "rho" in params:
+        for task_key, rho_data in params["rho"].items():
+            if task_key in model.i:
+                if "rhoIScons" in rho_data:
+                    for state, value in rho_data["rhoIScons"].items():
+                        model.rhoIScons[task_key, state] = value
+                if "rhoISprod" in rho_data:
+                    for state, value in rho_data["rhoISprod"].items():
+                        model.rhoISprod[task_key, state] = value
+
+    demand_data = {k: v["demand"] for k, v in params["products"].items()}
+    model.D = pyo.Param(model.s, initialize=demand_data, default=0)
+
+    model.penaltyEmptyTank = pyo.Param(initialize=params["global"]["penaltyEmptyTank"])
+    model.penaltyAir = pyo.Param(initialize=params["global"]["penaltyAir"])
+    model.penaltyMaxUtilization = pyo.Param(
+        initialize=params["global"]["penaltyMaxUtilization"]
+    )
+    model.total_avg_range = pyo.Param(initialize=total_avg_range_value, mutable=False)
+    model.inv_total_avg_range = pyo.Param(initialize=1 / total_avg_range_value)
+
+    # Sparse Index Sets
+    n_max = max(model.n)
+
+    precedence_pairs = [
+        (i, ip, s)
+        for i in model.i
+        for ip in model.i
+        for s in model.s
+        if i != ip and (i, s) in model.ICS and (ip, s) in model.IPS
+    ]
+    model.PrecedencePairs = pyo.Set(initialize=precedence_pairs, dimen=3)
+    model.ZWPrecedencePairs = pyo.Set(
+        initialize=[(i, ip, s) for i, ip, s in precedence_pairs if s in model.SZW],
+        dimen=3,
+    )
+    model.NISPrecedencePairs = pyo.Set(
+        initialize=[(i, ip, s) for i, ip, s in precedence_pairs if s in model.SNIS],
+        dimen=3,
+    )
+    model.EcoPrecedencePairs = pyo.Set(
+        initialize=[(i, ip, s) for i, ip, s in precedence_pairs if s in model.SFISEco],
+        dimen=3,
+    )
+
+    # ========================================
+    # VARIABLES
+    # ========================================
+
+    # Keep Binary W and y for global sums/counts logic
+    model.W = pyo.Var(model.i, model.n, domain=pyo.Binary)
+    model.y = pyo.Var(model.ij, model.n, domain=pyo.Binary)
+
+    # Add Boolean Vars for GDP
+    model.W_bool = pyo.BooleanVar(model.i, model.n)
+    model.y_bool = pyo.BooleanVar(model.ij, model.n)
+
+    # Auxiliary booleans for logic
+    model.Idle_bool = pyo.BooleanVar(model.j, model.n)  # Unit Idle
+    model.W_inactive_bool = pyo.BooleanVar(model.i, model.n)  # Task Inactive
+
+    # Continuous Variables
+    model.b = pyo.Var(model.i, model.n, domain=pyo.NonNegativeReals)
+    model.bj = pyo.Var(model.i, model.j, model.n, domain=pyo.NonNegativeReals)
+
+    # Set upper bounds for bj and b to allow BigM estimation
+    # Find global max capacity
+    max_tank_cap = 0
+    if hasattr(model, "Bmax"):
+        for key in model.Bmax:
+            val = pyo.value(model.Bmax[key])
+            if val > max_tank_cap:
+                max_tank_cap = val
+    if max_tank_cap == 0:
+        max_tank_cap = 500000  # Fallback
+
+    for i in model.i:
+        for n in model.n:
+            model.b[i, n].setub(max_tank_cap * len(model.j))  # Conservative upper bound
+            for j in model.j:
+                model.bj[i, j, n].setub(max_tank_cap)
+
+    model.ST = pyo.Var(model.s, model.n, domain=pyo.NonNegativeReals)
+    model.Ts = pyo.Var(
+        model.i, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
+    )
+    model.Tf = pyo.Var(
+        model.i, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
+    )
+    model.Tsj = pyo.Var(
+        model.j, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
+    )
+    model.Tfj = pyo.Var(
+        model.j, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
+    )
+    model.ProdFinal = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
+    model.FueraDeposito = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
+    model.MS = pyo.Var(domain=pyo.NonNegativeReals)
+    model.JSTsinusar = pyo.Var(domain=pyo.NonNegativeReals)
+    model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
+
+    ProdFinal_bounds = params["product_ub"]
+    for sp in model.SP:
+        if sp in ProdFinal_bounds:
+            model.ProdFinal[sp].setub(ProdFinal_bounds[sp])
+
+    # ========================================
+    # CONSTRAINTS (Standard Algebraic)
+    # ========================================
+
+    # Material balances (h04, h03)
+    def h04_rule(model, s, n):
+        consumed = sum(
+            model.rhoIScons[i, s] * model.b[i, n]
+            for i in model.i
+            if (i, s) in model.ICS
+        )
+        return model.ST[s, n] == model.ST0[s] + consumed
+
+    model.h04 = pyo.Constraint(model.s, [1], rule=h04_rule)
+
+    def h03_rule(model, s, n):
+        produced = sum(
+            model.rhoISprod[i, s] * model.b[i, n - 1]
+            for i in model.i
+            if (i, s) in model.IPS
+        )
+        consumed = sum(
+            model.rhoIScons[i, s] * model.b[i, n]
+            for i in model.i
+            if (i, s) in model.ICS
+        )
+        return model.ST[s, n] == model.ST[s, n - 1] + produced + consumed
+
+    model.h03 = pyo.Constraint(model.s, [n for n in model.n if n > 1], rule=h03_rule)
+
+    # Task sequencing g06 (Always active)
+    def g06_rule(model, i, n):
+        return model.Ts[i, n + 1] >= model.Tf[i, n]
+
+    model.g06 = pyo.Constraint(
+        model.i, [n for n in model.n if n < n_max], rule=g06_rule
+    )
+
+    # Unit capacity h09
+    def h09_rule(model, j):
+        total_time = sum(
+            model.alpha[i] * model.y[i, j, n] + model.beta[i] * model.bj[i, j, n]
+            for i in model.inst
+            for n in model.n
+            if (i, j) in model.ij
+        )
+        return total_time <= model.H
+
+    model.h09 = pyo.Constraint(model.j, rule=h09_rule)
+
+    # Zero Inventory h14/15/16
+    def h14_rule(model, s, n):
+        return model.ST[s, n] == 0
+
+    model.h14 = pyo.Constraint(model.SZW, model.n, rule=h14_rule)
+
+    def h15_rule(model, s, n):
+        return model.ST[s, n] == 0
+
+    model.h15 = pyo.Constraint(model.SNIS, model.n, rule=h15_rule)
+
+    def h16_rule(model, s):
+        produced = sum(
+            model.rhoISprod[i, s] * model.b[i, n_max]
+            for i in model.i
+            if (i, s) in model.IPS
+        )
+        return model.ST[s, n_max] + produced == 0
+
+    model.h16 = pyo.Constraint(model.SZW, rule=h16_rule)
+
+    model.g17 = pyo.Constraint(model.SP, rule=lambda m, s: m.ProdFinal[s] >= m.D[s])
+
+    # A01/A02/A01st/A02st: Use original equations with Binary W and y
+    def A01_rule(model, i, n):
+        return (
+            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
+            <= model.jMax * model.W[i, n]
+        )
+
+    model.A01 = pyo.Constraint(model.inst, model.n, rule=A01_rule)
+
+    def A02_rule(model, i, n):
+        return (
+            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
+            >= model.jMin * model.W[i, n]
+        )
+
+    model.A02 = pyo.Constraint(model.inst, model.n, rule=A02_rule)
+
+    def A01st_rule(model, i, n):
+        return (
+            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
+            <= model.jMaxST * model.W[i, n]
+        )
+
+    model.A01st = pyo.Constraint(model.ist, model.n, rule=A01st_rule)
+
+    def A02st_rule(model, i, n):
+        return (
+            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
+            >= model.jMinST * model.W[i, n]
+        )
+
+    model.A02st = pyo.Constraint(model.ist, model.n, rule=A02st_rule)
+
+    # A04: Total batch
+    def A04_rule(model, i, n):
+        return model.b[i, n] == sum(
+            model.bj[i, j, n] for j in model.j if (i, j) in model.ij
+        )
+
+    model.A04 = pyo.Constraint(model.i, model.n, rule=A04_rule)
+
+    # A06: Max activations (non-storage tasks)
+    model.A06 = pyo.Constraint(
+        model.inst, rule=lambda m, i: sum(m.W[i, n] for n in m.n) <= m.iMax
+    )
+    # A06st: Max activations (storage tasks)
+    # With persistence (A14), W[i,n] is non-decreasing, so W[i, n_max] suffices.
+    model.A06st = pyo.Constraint(
+        model.ist, rule=lambda m, i: m.W[i, n_max] <= m.iMaxST
+    )
+    model.A07 = pyo.Constraint(
+        model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.Ts[i, n]
+    )
+
+    # A08: Need to link BigM constraint carefully or replace.
+    # Original: Tf >= H * W. This is algebraic, fine.
+    model.A08 = pyo.Constraint(
+        model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.H * m.W[i, n]
+    )
+
+    # A09/A10: Unit event sequencing
+    model.A09 = pyo.Constraint(
+        model.j,
+        [n for n in model.n if n < n_max],
+        rule=lambda m, j, n: m.Tsj[j, n + 1] >= m.Tfj[j, n],
+    )
+    model.A10 = pyo.Constraint(
+        model.j, model.n, rule=lambda m, j, n: m.Tfj[j, n] >= m.Tsj[j, n]
+    )
+
+    # Persistence
+    def A13a_rule(model, i, ip, n):
+        return model.W[ip, n + 1] == model.W[i, n]
+
+    model.A13a = pyo.Constraint(
+        model.tc1, [n for n in model.n if n < n_max], rule=A13a_rule
+    )
+
+    def A13b_rule(model, i, ip, n):
+        return model.W[ip, n + 1] == model.W[i, n]
+
+    model.A13b = pyo.Constraint(
+        [
+            (i, ip, n)
+            for i, ip in model.tc2
+            for n in model.n
+            if n < n_max and model.MustUseEcobulk == 1
+        ],
+        rule=A13b_rule,
+    )
+
+    def A13c_rule(model, i, ip, n):
+        return model.W[ip, n + 1] <= model.W[i, n]
+
+    model.A13c = pyo.Constraint(
+        [
+            (i, ip, n)
+            for i, ip in model.tc2
+            for n in model.n
+            if n < n_max and model.MustUseEcobulk != 1
+        ],
+        rule=A13c_rule,
+    )
+
+    # Storage task persistence - recursive chain (A14)
+    model.A14 = pyo.Constraint(
+        [(i, n) for i in model.ist for n in model.n if n < n_max],
+        rule=lambda m, i, n: m.W[i, n + 1] >= m.W[i, n],
+    )
+    # Storage unit persistence - recursive chain (A15)
+    model.A15 = pyo.Constraint(
+        [
+            (i, j, n)
+            for i in model.ist
+            for j in model.j
+            for n in model.n
+            if (i, j) in model.ij and n < n_max
+        ],
+        rule=lambda m, i, j, n: m.y[i, j, n + 1] >= m.y[i, j, n],
+    )
+    model.A17 = pyo.Constraint(
+        [s for s in model.SFISEco if model.MustUseEcobulk == 1],
+        rule=lambda m, s: sum(m.W[i, n] for i in m.i for n in m.n if (i, s) in m.ICS)
+        >= 1,
+    )
+
+    # Ends
+    model.A18 = pyo.Constraint(
+        model.SP,
+        [n_max],
+        rule=lambda m, s, n: m.ST[s, n]
+        + sum(m.rhoISprod[i, s] * m.b[i, n] for i in m.i if (i, s) in m.IPS)
+        == m.ProdFinal[s],
+    )
+    model.A19 = pyo.Constraint(
+        model.SP,
+        rule=lambda m, s: m.FueraDeposito[s]
+        == m.ProdFinal[s]
+        - sum(
+            m.rhoISprod[i, s] * m.b[i, n] for i in m.ist for n in m.n if (i, s) in m.IPS
+        ),
+    )
+    model.A21 = pyo.Constraint(
+        model.ipst, [n_max], rule=lambda m, i, n: m.Tf[i, n] <= m.MS
+    )
+    model.A22 = pyo.Constraint(
+        rule=lambda m: m.JSTsinusar
+        == m.nJST
+        - sum(m.y[i, j, n] for j in m.JST for n in m.n for i in m.ist if (i, j) in m.ij)
+    )
+
+    def A23_rule(model, j, i):
+        used = sum(model.bj[i, j, n] for n in model.n)
+        used_flag = sum(model.y[i, j, n] for n in model.n)
+        return model.Freespace[j] <= model.Bmax[i, j] - used + model.Bmax[i, j] * (
+            1 - used_flag
+        )
+
+    model.A23 = pyo.Constraint(
+        model.JST,
+        model.ist,
+        rule=lambda m, j, i: A23_rule(m, j, i)
+        if (i, j) in m.ij
+        else pyo.Constraint.Skip,
+    )
+
+    def A24_rule(model, j, i):
+        used = sum(model.bj[i, j, n] for n in model.n)
+        used_flag = sum(model.y[i, j, n] for n in model.n)
+        return model.Freespace[j] >= model.Bmax[i, j] - used - model.Bmax[i, j] * (
+            1 - used_flag
+        )
+
+    model.A24 = pyo.Constraint(
+        model.JST,
+        model.ist,
+        rule=lambda m, j, i: A24_rule(m, j, i)
+        if (i, j) in m.ij
+        else pyo.Constraint.Skip,
+    )
+
+    # ========================================
+    # DISJUNCTIONS
+    # ========================================
+
+    # Helper to add constraints to disjuncts safely
+    def add_constr(block, name, expr):
+        block.add_component(name, pyo.Constraint(expr=expr))
+
+    # 1. Task Activation
+    def task_active_rule(d, i, n):
+        m = d.model()
+        add_constr(
+            d,
+            "constr_time",
+            m.Tf[i, n] == m.Ts[i, n] + m.alpha[i] + m.beta[i] * m.b[i, n],
+        )
+
+        # Link W: If active, W must be 1
+        add_constr(d, "link_w_ge", m.W[i, n] >= 1)
+
+        d.prec = pyo.ConstraintList()
+        n_max = max(m.n)
+        if n < n_max:
+            # g11 logic
+            for succ, prec, s in m.PrecedencePairs:
+                if prec == i:
+                    d.prec.add(m.Ts[succ, n + 1] >= m.Tf[i, n])
+
+    def task_inactive_rule(d, i, n):
+        m = d.model()
+        add_constr(d, "constr_b", m.b[i, n] == 0)
+        add_constr(d, "constr_time", m.Tf[i, n] == m.Ts[i, n])
+
+        # Link W: If inactive, W must be 0
+        add_constr(d, "link_w_le", m.W[i, n] <= 0)
+
+    for i in model.i:
+        for n in model.n:
+            d_act = gdp.Disjunct()
+            d_inact = gdp.Disjunct()
+            model.add_component(f"d_act_{i}_{n}", d_act)
+            model.add_component(f"d_inact_{i}_{n}", d_inact)
+
+            task_active_rule(d_act, i, n)
+            task_inactive_rule(d_inact, i, n)
+
+            model.add_component(
+                f"Disj_Task_{i}_{n}", gdp.Disjunction(expr=[d_act, d_inact])
+            )
+
+    # 2. Unit Assignment
+    for j in model.j:
+        for n in model.n:
+            disjuncts = []
+            compatible_tasks = [i for i in model.i if (i, j) in model.ij]
+
+            for k in compatible_tasks:
+                d = gdp.Disjunct()
+                model.add_component(f"d_assign_{j}_{n}_{k}", d)
+
+                # A11/A12
+                add_constr(d, "sync_ts", model.Tsj[j, n] == model.Ts[k, n])
+                add_constr(d, "sync_tf", model.Tfj[j, n] == model.Tf[k, n])
+
+                # A05
+                add_constr(d, "batch_min", model.bj[k, j, n] >= model.Bmin[k, j])
+                add_constr(d, "batch_max", model.bj[k, j, n] <= model.Bmax[k, j])
+
+                # Link y - Inequality
+                d.link_y_active = pyo.ConstraintList()
+                d.link_y_active.add(model.y[k, j, n] >= 1)
+                for other_i in compatible_tasks:
+                    if other_i != k:
+                        d.link_y_active.add(model.y[other_i, j, n] <= 0)
+                disjuncts.append(d)
+
+            d_idle = gdp.Disjunct()
+            model.add_component(f"d_idle_{j}_{n}", d_idle)
+
+            d_idle.batch_zero = pyo.ConstraintList()
+            d_idle.link_y_zero = pyo.ConstraintList()
+            for i in compatible_tasks:
+                d_idle.batch_zero.add(model.bj[i, j, n] == 0)
+                d_idle.link_y_zero.add(model.y[i, j, n] <= 0)
+
+            disjuncts.append(d_idle)
+            model.add_component(f"Disj_Unit_{j}_{n}", gdp.Disjunction(expr=disjuncts))
+
+    # 3. Conditional Precedence (Pure GDP Implementation)
+    # Logic: Disjunction over [Predecessor Inactive] OR [Successor Inactive] OR [Enforce Precedence]
+    # This replaces the manual Big-M implication: W1=1 & W2=1 => Ts2 >= Tf1
+    def add_gdp_precedence(pair_set, prefix):
+        # Enumerate to create unique names
+        for idx, (i, ip, s) in enumerate(pair_set):
+            if n_max < 2:
+                continue
+            for n in model.n:
+                if n >= n_max:
+                    continue
+                # Ensure we only create for valid n, n+1
+
+                # Check bounds or existing logic for indices if necessary,
+                # but model.n iteration covers it.
+
+                # 1. Option A: Predecessor (ip) at n is Inactive
+                d_pred_inact = gdp.Disjunct()
+                d_pred_inact.c = pyo.Constraint(expr=model.W[ip, n] == 0)
+
+                # 2. Option B: Successor (i) at n+1 is Inactive
+                d_succ_inact = gdp.Disjunct()
+                d_succ_inact.c = pyo.Constraint(expr=model.W[i, n + 1] == 0)
+
+                # 3. Option C: Precedence Holds (Time constraint)
+                d_enforce = gdp.Disjunct()
+                d_enforce.c = pyo.Constraint(expr=model.Ts[i, n + 1] >= model.Tf[ip, n])
+
+                # Name components uniquely
+                nm = f"prec_{prefix}_{idx}_{n}"
+                model.add_component(f"d_pi_{nm}", d_pred_inact)
+                model.add_component(f"d_si_{nm}", d_succ_inact)
+                model.add_component(f"d_en_{nm}", d_enforce)
+
+                # The Disjunction: Solver must choose at least one valid state (Standard XOR)
+                # If both tasks are active, Disjuncts 1 and 2 are invalid, forcing Disjunct 3.
+                model.add_component(
+                    f"D_{nm}",
+                    gdp.Disjunction(expr=[d_pred_inact, d_succ_inact, d_enforce]),
+                )
+
+    add_gdp_precedence(model.ZWPrecedencePairs, "ZW")
+    add_gdp_precedence(model.NISPrecedencePairs, "NIS")
+    add_gdp_precedence(model.EcoPrecedencePairs, "Eco")
+
+    # ========================================
+    # OBJECTIVE FUNCTION
+    # ========================================
+    def obj_func(model):
+        penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JSTsinusar
+        penalty_space = (
+            model.penaltyAir
+            * model.inv_total_avg_range
+            * sum(model.Freespace[j] for j in model.JST)
+        )
+        return model.MS + penalty_unused + penalty_space
+
+    model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.minimize)
+
+    # Apply Transformation
+    print("Applying GDP BigM transformation...")
+    pyo.TransformationFactory("gdp.hull").apply_to(model)
+
+    return model
+
+
+def solve_model(model, solver_name="gurobi", time_limit=3600):
+    solver = SolverFactory(solver_name)
+    if solver is None:
+        print("Solver not found")
+        return None
+    solver.options["TimeLimit"] = time_limit
+    solver.options["MIPGap"] = 0.001
+
+    print(f"Solving with {solver_name}...")
+    results = solver.solve(model, tee=True)
+
+    if (
+        results.solver.termination_condition == pyo.TerminationCondition.optimal
+        or results.solver.termination_condition == pyo.TerminationCondition.feasible
+    ):
+        obj_val = pyo.value(model.OBJ, exception=False)
+        print(f"Objective: {obj_val}")
+        with open("results_gdp.txt", "w") as f:
+            f.write(f"Obj: {obj_val}\n")
+            for i in model.i:
+                for n in model.n:
+                    w_val = pyo.value(model.W[i, n], exception=False)
+                    if w_val is not None and w_val > 0.5:
+                        ts_val = pyo.value(model.Ts[i, n], exception=False)
+                        tf_val = pyo.value(model.Tf[i, n], exception=False)
+                        if ts_val is not None and tf_val is not None:
+                            f.write(f"Task {i} at {n}: Start {ts_val}, End {tf_val}\n")
+                        else:
+                            f.write(
+                                f"Task {i} at {n}: Active (Time vars uninitialized)\n"
+                            )
+    else:
+        print("No solution or Infeasible")
+
+    return results
+
+
+if __name__ == "__main__":
+    try:
+        model = create_wine_scheduling_model()
+        solve_model(model)
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
