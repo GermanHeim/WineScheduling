@@ -3,23 +3,20 @@
 # 1. Global Settings - Time and Penalties
 [global]
     # The "Big M" Horizon (total available hours in the model)
-    #H = 4320  # 180 days
-    H = 3600  # 150 days
+    H = 4320  # 180 days
 
     # Target Deadline for the schedule
-    # (Used to calculate lateness)
-    # Not yet used
+    # (Used to calculate lateness penalty in profit maximization)
     deadline = 3600 # 150 days
 
     # Penalty for being late ($/hour delayed past deadline)
     penaltyLate = 100
 
-    # Technical penalty weights (for objective function tuning)
-    # This needs to be change since it was not in the original model
-    # but based on time (h)
-    penaltyMaxUtilization = 0.25  # Penalty for not utilizing tanks fully
-    penaltyEmptyTank = 10.0       # Penalty for leaving tanks empty
-    penaltyAir = 10.0             # Penalty for leaving air in tanks
+    # Technical penalty weights for profit optimization (all in USD)
+    # These are scaled to be meaningful compared to revenue 
+    # (aprox $300k) and lateness (aprox $10k-50k)
+    penaltyEmptyTank = 5000.0     # Penalty ($) for each unused storage tank (opportunity cost, overhead)
+    penaltyAir = 1000.0           # Penalty ($) for free space in tanks (inefficiency, normalized by avg range)
 
 # 2. Products - Prices, Demand, Outsourcing Costs
 #
