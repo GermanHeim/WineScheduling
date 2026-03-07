@@ -1,0 +1,226 @@
+# Winery Scheduling Optimization Model Parameters
+#
+# This TOML file is adapted for the Makespan Minimization Model
+#
+# 1. Global Settings - Time and Penalties
+[global]
+    # The "Big M" Horizon (total available hours in the model)
+    H = 3600  # 150 days
+
+    # Technical penalty weights (for objective function tuning) based on time (h)
+    penaltyMaxUtilization = 0.25  # Penalty for not utilizing tanks fully
+    penaltyEmptyTank = 10.0       # Penalty for leaving tanks empty
+    penaltyAir = 10.0             # Penalty for leaving air in tanks
+
+# 2. Products - Prices, Demand, Outsourcing Costs
+#
+# 'name': Product Name
+# 'demand': Demand (L)
+[products]
+    [products.p1]
+        name = "p1"
+        demand = 1134
+
+    [products.p2]
+        name = "p2"
+        demand = 3465
+    
+    [products.p3]
+        name = "p3"
+        demand = 3780
+
+    [products.p4]
+        name = "p4"
+        demand = 4000
+
+    [products.p5]
+        name = "p5"
+        demand = 10000
+    
+    [products.p6]
+        name = "p6"
+        demand = 10000
+
+# 3. Initial Inventory - Vineyard/Reception
+#
+# 'ST0': Initial Stock at Time = 0
+[initial_inventory]
+    s1 = 100000
+    s2 = 9137
+    s3 = 400000
+    s4 = 400000
+    s5 = 600000
+    s6 = 150000
+
+# 4. Upper Bounds for the Model
+#
+# It is used as:
+# ProdFinal[s] =< ProdFinal_bounds[s]
+# This is equivalent to adding an explicit constraint,
+# but implemented as a variable bound, which is tighter and better for MIP performance.
+[product_ub]
+    p1 = 1134
+    p2 = 3465
+    p3 = 3780
+    p4 = 4000
+    p5 = 10000
+    p6 = 10000
+
+# 5. Product Lines
+# 
+# This list tells Python to generate tasks for lines 1 to 6
+# Since there are 6 production lines (6 Fa, 6 Fl, 6 Fr, 6 Alm)
+[lines]
+idx = ["1", "2", "3", "4", "5", "6"]
+
+# 6. Tasks Templates
+# 
+# These rules apply to ALL lines
+#
+# Fermentation (Fa)
+[templates.Fa]
+    alpha = 144.0  # Duration
+    beta = 0.0
+    
+    # Allowed Tanks and Limits [Bmin, Bmax]
+    [templates.Fa.compatible_units]
+        inox5000  = [500, 4000]
+        inox10000 = [1000, 8000]
+        inox17500 = [1750, 14000]
+        inox22000 = [2200, 17600]
+
+# Malolactic fermentation (Fl)
+[templates.Fl]
+    alpha = 504.0
+    beta = 0.0
+    
+    # Allowed Tanks and Limits [Bmin, Bmax]
+    [templates.Fl.compatible_units]
+        inox22000  = [4400, 21560] 
+        subte6300  = [1260, 6174]
+        subte7500  = [1500, 7350]
+        subte9000  = [1800, 8820]
+        subte9500  = [1900, 9310]
+        subte12700 = [2540, 12446]
+
+# Cold stabilization (Fr)
+[templates.Fr]
+    alpha = 168.0
+    beta = 0.0
+    
+    # Allowed Tanks and Limits [Bmin, Bmax]
+    [templates.Fr.compatible_units]
+        iso5000  = [1000, 5000]
+        iso10000 = [2000, 10000]
+
+# Storage (Alm)
+[templates.Alm]
+    alpha = 2160.0
+    beta = 0.0
+    
+    # Allowed Tanks and Limits [Bmin, Bmax]
+    [templates.Alm.compatible_units]
+        inox22000  = [20900, 22000]
+        subte6300  = [5985, 6300]
+        subte7500  = [7125, 7500]
+        subte9000  = [8550, 9000]
+        subte9500  = [9025, 9500]
+        subte12700 = [12065, 12700]
+        iso5000    = [4750, 5000]
+        iso10000   = [9500, 10000]
+
+# 7. State Consumption/Production Coefficients (rho)
+# 
+# These define how much of each state is consumed/produced per unit batch size
+# for each task type. Applied to all lines (1-6) of each task type.
+[rho.Fa1]
+    rhoIScons = {s1 = -1.0}
+    rhoISprod = {v1 = 0.7}
+
+[rho.Fa2]
+    rhoIScons = {s2 = -1.0}
+    rhoISprod = {v2 = 0.7}
+
+[rho.Fa3]
+    rhoIScons = {s3 = -1.0}
+    rhoISprod = {v3 = 0.7}
+
+[rho.Fa4]
+    rhoIScons = {s4 = -1.0}
+    rhoISprod = {v4 = 0.7}
+
+[rho.Fa5]
+    rhoIScons = {s5 = -1.0}
+    rhoISprod = {v5 = 0.7}
+
+[rho.Fa6]
+    rhoIScons = {s6 = -1.0}
+    rhoISprod = {v6 = 0.7}
+
+[rho.Fl1]
+    rhoIScons = {v1 = -1.0}
+    rhoISprod = {vl1 = 0.9}
+
+[rho.Fl2]
+    rhoIScons = {v2 = -1.0}
+    rhoISprod = {vl2 = 0.9}
+
+[rho.Fl3]
+    rhoIScons = {v3 = -1.0}
+    rhoISprod = {vl3 = 0.9}
+
+[rho.Fl4]
+    rhoIScons = {v4 = -1.0}
+    rhoISprod = {vl4 = 0.9}
+
+[rho.Fl5]
+    rhoIScons = {v5 = -1.0}
+    rhoISprod = {vl5 = 0.9}
+
+[rho.Fl6]
+    rhoIScons = {v6 = -1.0}
+    rhoISprod = {vl6 = 0.9}
+
+[rho.Fr1]
+    rhoIScons = {vl1 = -1.0}
+    rhoISprod = {p1 = 1.0}
+
+[rho.Fr2]
+    rhoIScons = {vl2 = -1.0}
+    rhoISprod = {p2 = 1.0}
+
+[rho.Fr3]
+    rhoIScons = {vl3 = -1.0}
+    rhoISprod = {p3 = 1.0}
+
+[rho.Fr4]
+    rhoIScons = {vl4 = -1.0}
+    rhoISprod = {p4 = 1.0}
+
+[rho.Fr5]
+    rhoIScons = {vl5 = -1.0}
+    rhoISprod = {p5 = 1.0}
+
+[rho.Fr6]
+    rhoIScons = {vl6 = -1.0}
+    rhoISprod = {p6 = 1.0}
+
+[rho.Alm1]
+
+[rho.Alm2]
+    rhoIScons = {p2 = -1.0}
+    rhoISprod = {p2 = 1.0}
+
+[rho.Alm3]
+    rhoIScons = {p3 = -1.0}
+    rhoISprod = {p3 = 1.0}
+
+[rho.Alm4]
+    rhoIScons = {p4 = -1.0}
+
+[rho.Alm5]
+    rhoIScons = {p5 = -1.0}
+    rhoISprod = {p5 = 1.0}
+
+[rho.Alm6]
+    rhoIScons = {p6 = -1.0}

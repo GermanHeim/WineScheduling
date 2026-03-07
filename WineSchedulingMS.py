@@ -23,7 +23,7 @@ from pyomo.opt import SolverFactory  # type: ignore
 import tomllib
 
 
-def create_wine_scheduling_model(toml_file="parameters.toml"):
+def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     """Create and return the wine scheduling optimization model"""
 
     # Load parameters from TOML file
@@ -880,13 +880,13 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     # Storage task persistence (A14)
     def A14_rule(model, i, n, np):
-        return 1 - model.W[i, np] >= model.W[i, n]
+        return model.W[i, np] >= model.W[i, n]
 
     model.A14 = pyo.Constraint(model.A14_indices, rule=A14_rule)
 
     # Storage unit persistence (A15)
     def A15_rule(model, i, j, n, np):
-        return 1 - model.y[i, j, np] >= model.y[i, j, n]
+        return model.y[i, j, np] >= model.y[i, j, n]
 
     model.A15 = pyo.Constraint(model.A15_indices, rule=A15_rule)
 
