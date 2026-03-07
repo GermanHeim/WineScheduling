@@ -549,26 +549,19 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     ]
     model.A13c_indices = pyo.Set(initialize=A13c_indices, dimen=3)
 
-    # For A14: storage task persistence
-    A14_indices = [
-        (i, n, np)
-        for i in model.ist
-        for n in model.n
-        for np in model.n
-        if n < n_max and np > n
-    ]
-    model.A14_indices = pyo.Set(initialize=A14_indices, dimen=3)
+    # For A14: storage task persistence (recursive chain: n+1 >= n)
+    A14_indices = [(i, n) for i in model.ist for n in model.n if n < n_max]
+    model.A14_indices = pyo.Set(initialize=A14_indices, dimen=2)
 
-    # For A15: storage unit persistence
+    # For A15: storage unit persistence (recursive chain: n+1 >= n)
     A15_indices = [
-        (i, j, n, np)
+        (i, j, n)
         for i in model.ist
         for j in model.j
         for n in model.n
-        for np in model.n
-        if (i, j) in model.ij and n < n_max and np > n
+        if (i, j) in model.ij and n < n_max
     ]
-    model.A15_indices = pyo.Set(initialize=A15_indices, dimen=4)
+    model.A15_indices = pyo.Set(initialize=A15_indices, dimen=3)
 
     # For A17: must use deposit for ecobulk
     A17_indices = [s for s in model.SFISEco if model.MustUseEcobulk == 1]
@@ -807,8 +800,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.A06 = pyo.Constraint(model.A06_indices, rule=A06_rule)
 
     # Maximum activations per storage task (A06st)
+    # With persistence (A14), W[i,n] is non-decreasing, so checking only the
+    # final event W[i, n_max] is sufficient to limit activations.
     def A06st_rule(model, i):
-        return sum(model.W[i, n] for n in model.n) <= model.iMaxST
+        return model.W[i, n_max] <= model.iMaxST
 
     model.A06st = pyo.Constraint(model.A06st_indices, rule=A06st_rule)
 
@@ -878,15 +873,15 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.A13c = pyo.Constraint(model.A13c_indices, rule=A13c_rule)
 
-    # Storage task persistence (A14)
-    def A14_rule(model, i, n, np):
-        return model.W[i, np] >= model.W[i, n]
+    # Storage task persistence (A14) - recursive chain
+    def A14_rule(model, i, n):
+        return model.W[i, n + 1] >= model.W[i, n]
 
     model.A14 = pyo.Constraint(model.A14_indices, rule=A14_rule)
 
-    # Storage unit persistence (A15)
-    def A15_rule(model, i, j, n, np):
-        return model.y[i, j, np] >= model.y[i, j, n]
+    # Storage unit persistence (A15) - recursive chain
+    def A15_rule(model, i, j, n):
+        return model.y[i, j, n + 1] >= model.y[i, j, n]
 
     model.A15 = pyo.Constraint(model.A15_indices, rule=A15_rule)
 
