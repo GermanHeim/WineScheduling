@@ -456,9 +456,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
     # A06st: Max activations (storage tasks)
     # With persistence (A14), W[i,n] is non-decreasing, so W[i, n_max] suffices.
-    model.A06st = pyo.Constraint(
-        model.ist, rule=lambda m, i: m.W[i, n_max] <= m.iMaxST
-    )
+    model.A06st = pyo.Constraint(model.ist, rule=lambda m, i: m.W[i, n_max] <= m.iMaxST)
     model.A07 = pyo.Constraint(
         model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.Ts[i, n]
     )
