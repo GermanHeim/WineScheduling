@@ -293,63 +293,72 @@ Minimize makespan while trying to:
 
 The reformulation in this model (`WineSchedulingMS_GDP.py`) uses Disjunctive Programming to capture logical `OR` decisions (Run vs. Don't Run, Assign vs. Idle) directly, avoiding manual Big-M constraints for core operational logic.
 
-### 1. Disjunctions (Logical Structure)
+### 1. Combined Task & Unit Disjunction (Eq. 2.1)
 
-#### 1.1 Task Activation (`Disj_Task`)
+Task activation and unit selection are combined into a single nested disjunction. If a task is active it must pick its units; if inactive, everything is zeroed out.
 
-For every task $i$ at event $n$, the system chooses between two operating modes:
-
-**Active Mode ($D^{Act}_{i,n}$):**
-
-$$ \begin{bmatrix} 
-W_{i,n} \ge 1 \\
+$$\forall i \in I, n \in N:
+\begin{bmatrix}
+Y_{i,n} \\
+W_{i,n} = 1 \\
 Tf_{i,n} = Ts_{i,n} + \alpha_i + \beta_i b_{i,n} \\
-\forall (k,i) \in Prec: Ts_{i,n} \ge Tf_{k,n-1} 
-\end{bmatrix} $$
-
-**Inactive Mode ($D^{Inact}_{i,n}$):**
-
-$$ \begin{bmatrix} 
-W_{i,n} \le 0 \\
+b_{i,n} = \sum_{j \in J_i} b_{i,j,n} \\
+\bigvee_{j \in J_i} \begin{bmatrix}
+y_{i,j,n} = 1 \\
+B^{min}_{i,j} \le b_{i,j,n} \le B^{max}_{i,j} \\
+Tsj_{j,n} = Ts_{i,n} \\
+Tfj_{j,n} = Tf_{i,n}
+\end{bmatrix}
+\underline{\vee}
+\begin{bmatrix}
+y_{i,j,n} = 0 \\
+b_{i,j,n} = 0
+\end{bmatrix}
+\end{bmatrix}
+\underline{\vee}
+\begin{bmatrix}
+\neg Y_{i,n} \\
+W_{i,n} = 0 \\
+b_{i,n} = 0 \\
 Tf_{i,n} = Ts_{i,n} \\
-b_{i,n} = 0
-\end{bmatrix} $$
+\forall j \in J_i: y_{i,j,n} = 0, \; b_{i,j,n} = 0
+\end{bmatrix}$$
 
-#### 1.2 Unit Assignment (`Disj_Unit`)
-For every unit $j$ at event $n$, the system must choose *exactly one* state: either assign to a compatible task $k$ or remain Idle.
+A global constraint enforces at most one task per unit per event:
 
-**Assignment Mode ($D^{Assign}_{j,n,k}$) for $k \in I_j$:**
-$$ \begin{bmatrix} 
-y_{k,j,n} \ge 1 \\
-y_{k',j,n} \le 0 \quad \forall k' \ne k \\
-Tsj_{j,n} = Ts_{k,n} \\
-Tfj_{j,n} = Tf_{k,n} \\
-B^{min}_{k,j} \le b_{k,j,n} \le B^{max}_{k,j}
-\end{bmatrix} $$
+$$ \sum_{i} y_{i,j,n} \le 1 \quad \forall j, n $$
 
-**Idle Mode ($D^{Idle}_{j,n}$):**
-$$ \begin{bmatrix} 
-\forall k \in I_j: y_{k,j,n} \le 0 \\
-\forall k \in I_j: b_{k,j,n} = 0
-\end{bmatrix} $$
+### 2. Global Precedence Logic (Eq. 2.2)
 
-#### 1.3 Conditional Precedence (`D_Precedence`)
-For every precedence relationship $(i', i)$ across events $(n, n+1)$, the solver selects one valid logical state:
+Instead of 3-way disjunctions, precedence is expressed as conditional constraints using Big-M implications on $W$.
 
-$$ 
-\bigvee 
-\begin{pmatrix}
-\begin{bmatrix} W_{i', n} = 0 \end{bmatrix} \\
-\begin{bmatrix} W_{i, n+1} = 0 \end{bmatrix} \\
-\begin{bmatrix} Ts_{i,n+1} \ge Tf_{i',n} \end{bmatrix}
-\end{pmatrix}
-$$
+**General Precedence:**
 
-*Logic: Either the predecessor didn't happen, OR the successor didn't happen, OR the time constraint must hold.*
+$$ W_{i',n} = 1 \land W_{i,n+1} = 1 \implies Ts_{i,n+1} \ge Tf_{i',n} $$
 
-### 2. Algebraic Constraints (Global Coupling)
+Linearized as:
 
-These constraints remain algebraic as they involve aggregation across the entire horizon or multiple units, which is inefficient to model purely with disjunctions.
+$$ Ts_{i,n+1} \ge Tf_{i',n} - H(2 - W_{i',n} - W_{i,n+1}) $$
+
+**Zero-Wait / No-Intermediate-Storage / Ecobulk (equality when both active):**
+
+$$ W_{i',n} = 1 \land W_{i,n+1} = 1 \implies Ts_{i,n+1} = Tf_{i',n} $$
+
+Linearized as the $\ge$ above plus:
+
+$$ Ts_{i,n+1} \le Tf_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
+
+### 3. Storage Persistence via Logical Implications (Eq. 2.3)
+
+Persistence rules for storage tasks are expressed as pure logical implications on disjunct indicator variables, rather than algebraic inequality chains:
+
+$$ Y_{i,n} \implies Y_{i,n+1} \quad \forall i \in I^{st}, n < N $$
+
+This means once a storage task activates at event $n$, it must remain active for all subsequent events. The unit-level persistence ($y_{i,j,n} \implies y_{i,j,n+1}$) is retained as an algebraic constraint (A15).
+
+### 4. Algebraic Constraints (Global Coupling)
+
+These constraints remain algebraic as they involve aggregation across the entire horizon or multiple units.
 
 **Material Balances:**
 
@@ -358,15 +367,12 @@ $$ ST_{s,n} = ST_{s,n-1} + \sum \rho^{prod} b_{n-1} - \sum \rho^{cons} b_{n} $$
 **Global Capacity:**
 
 $$ \sum_{n} W_{i,n} \le iMax $$
-$$ b_{i,n} = \sum_{j} b_{i,j,n} $$
 
 **Unit Constraints:**
 
 $$ \sum_{j} y_{i,j,n} \le jMax \cdot W_{i,n} $$
 
-*(Note: The binary variables $W$ and $y$ are now driven by the Disjunctions defined in previously by "Hard Linking" constraints).*
+### 5. Variable Definitions (GDP Adaptations)
 
-### 3. Variable Definitions (GDP Adaptations)
-
-- **Booleans**: Implicitly handled by Pyomo logic or explicit linkers.
-- **Binaries ($W, y$):** Retained for global accounting (sums), forced to 0/1 values by the Disjunction constraints.
+- **Binaries ($W, y$):** Retained for global accounting (sums, persistence); forced to correct values by the disjunction constraints (`W=1` in active, `W=0` in inactive).
+- **Booleans:** Disjunct indicator variables are the GDP booleans; no separate `BooleanVar` declarations needed.
