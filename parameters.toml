@@ -244,6 +244,8 @@ idx = ["1", "2", "3", "4", "5", "6"]
     rhoISprod = {p6 = 1.0}
 
 [rho.Alm1]
+    rhoIScons = {p1 = -1.0}
+    rhoISprod = {p1 = 1.0}
 
 [rho.Alm2]
     rhoIScons = {p2 = -1.0}
@@ -255,6 +257,7 @@ idx = ["1", "2", "3", "4", "5", "6"]
 
 [rho.Alm4]
     rhoIScons = {p4 = -1.0}
+    rhoISprod = {p4 = 1.0}
 
 [rho.Alm5]
     rhoIScons = {p5 = -1.0}
@@ -262,3 +265,4 @@ idx = ["1", "2", "3", "4", "5", "6"]
 
 [rho.Alm6]
     rhoIScons = {p6 = -1.0}
+    rhoISprod = {p6 = 1.0}
