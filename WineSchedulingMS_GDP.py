@@ -279,17 +279,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # VARIABLES
     # ========================================
 
-    # Keep Binary W and y for global sums/counts logic
+    # Binary W and y for global sums/counts logic
     model.W = pyo.Var(model.i, model.n, domain=pyo.Binary)
     model.y = pyo.Var(model.ij, model.n, domain=pyo.Binary)
-
-    # Add Boolean Vars for GDP
-    model.W_bool = pyo.BooleanVar(model.i, model.n)
-    model.y_bool = pyo.BooleanVar(model.ij, model.n)
-
-    # Auxiliary booleans for logic
-    model.Idle_bool = pyo.BooleanVar(model.j, model.n)  # Unit Idle
-    model.W_inactive_bool = pyo.BooleanVar(model.i, model.n)  # Task Inactive
 
     # Continuous Variables
     model.b = pyo.Var(model.i, model.n, domain=pyo.NonNegativeReals)
@@ -455,7 +447,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         model.inst, rule=lambda m, i: sum(m.W[i, n] for n in m.n) <= m.iMax
     )
     # A06st: Max activations (storage tasks)
-    # With persistence (A14), W[i,n] is non-decreasing, so W[i, n_max] suffices.
+    # With persistence (Eq. 2.3), W[i,n] is non-decreasing, so W[i, n_max] suffices.
     model.A06st = pyo.Constraint(model.ist, rule=lambda m, i: m.W[i, n_max] <= m.iMaxST)
     model.A07 = pyo.Constraint(
         model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.Ts[i, n]
@@ -511,12 +503,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         rule=A13c_rule,
     )
 
-    # Storage task persistence - recursive chain (A14)
-    model.A14 = pyo.Constraint(
-        [(i, n) for i in model.ist for n in model.n if n < n_max],
-        rule=lambda m, i, n: m.W[i, n + 1] >= m.W[i, n],
-    )
-    # Storage unit persistence - recursive chain (A15)
+    # Storage unit persistence: y_{i,j,n} implies y_{i,j,n+1} (linear form, Eq. 2.3)
     model.A15 = pyo.Constraint(
         [
             (i, j, n)
@@ -589,137 +576,141 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
 
     # ========================================
-    # DISJUNCTIONS
+    # DISJUNCTIONS (Combined Task-Unit, Eq. 2.1)
     # ========================================
 
-    # Helper to add constraints to disjuncts safely
     def add_constr(block, name, expr):
         block.add_component(name, pyo.Constraint(expr=expr))
 
-    # 1. Task Activation
-    def task_active_rule(d, i, n):
-        m = d.model()
-        add_constr(
-            d,
-            "constr_time",
-            m.Tf[i, n] == m.Ts[i, n] + m.alpha[i] + m.beta[i] * m.b[i, n],
-        )
-
-        # Link W: If active, W must be 1
-        add_constr(d, "link_w_ge", m.W[i, n] >= 1)
-
-        d.prec = pyo.ConstraintList()
-        n_max = max(m.n)
-        if n < n_max:
-            # g11 logic
-            for succ, prec, s in m.PrecedencePairs:
-                if prec == i:
-                    d.prec.add(m.Ts[succ, n + 1] >= m.Tf[i, n])
-
-    def task_inactive_rule(d, i, n):
-        m = d.model()
-        add_constr(d, "constr_b", m.b[i, n] == 0)
-        add_constr(d, "constr_time", m.Tf[i, n] == m.Ts[i, n])
-
-        # Link W: If inactive, W must be 0
-        add_constr(d, "link_w_le", m.W[i, n] <= 0)
+    # Store references for LogicalConstraint persistence (Eq. 2.3)
+    active_disjuncts = {}
+    assign_disjuncts = {}
 
     for i in model.i:
+        compatible_units = [j for j in model.j if (i, j) in model.ij]
         for n in model.n:
-            d_act = gdp.Disjunct()
-            d_inact = gdp.Disjunct()
-            model.add_component(f"d_act_{i}_{n}", d_act)
-            model.add_component(f"d_inact_{i}_{n}", d_inact)
+            # --- Active Disjunct (Y_{i,n}) ---
+            d_active = gdp.Disjunct()
+            model.add_component(f"d_act_{i}_{n}", d_active)
+            active_disjuncts[i, n] = d_active
 
-            task_active_rule(d_act, i, n)
-            task_inactive_rule(d_inact, i, n)
-
-            model.add_component(
-                f"Disj_Task_{i}_{n}", gdp.Disjunction(expr=[d_act, d_inact])
+            # Duration equation
+            add_constr(
+                d_active,
+                "duration",
+                model.Tf[i, n]
+                == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
             )
 
-    # 2. Unit Assignment
-    for j in model.j:
-        for n in model.n:
-            disjuncts = []
-            compatible_tasks = [i for i in model.i if (i, j) in model.ij]
+            # Batch aggregation: b = sum bj
+            add_constr(
+                d_active,
+                "batch_sum",
+                model.b[i, n] == sum(model.bj[i, j, n] for j in compatible_units),
+            )
 
-            for k in compatible_tasks:
-                d = gdp.Disjunct()
-                model.add_component(f"d_assign_{j}_{n}_{k}", d)
+            # Link W (implied by Y_{i,n} in pure GDP)
+            add_constr(d_active, "link_w", model.W[i, n] == 1)
 
-                # A11/A12
-                add_constr(d, "sync_ts", model.Tsj[j, n] == model.Ts[k, n])
-                add_constr(d, "sync_tf", model.Tfj[j, n] == model.Tf[k, n])
+            # Nested unit selection: ⋁_{j in J_i}
+            for j in compatible_units:
+                d_assign = gdp.Disjunct()
+                d_skip = gdp.Disjunct()
+                d_active.add_component(f"d_assign_{j}", d_assign)
+                d_active.add_component(f"d_skip_{j}", d_skip)
+                assign_disjuncts[i, j, n] = d_assign
 
-                # A05
-                add_constr(d, "batch_min", model.bj[k, j, n] >= model.Bmin[k, j])
-                add_constr(d, "batch_max", model.bj[k, j, n] <= model.Bmax[k, j])
+                # Assign: y=1, batch limits, time sync
+                add_constr(d_assign, "y_on", model.y[i, j, n] == 1)
+                add_constr(d_assign, "bmin", model.bj[i, j, n] >= model.Bmin[i, j])
+                add_constr(d_assign, "bmax", model.bj[i, j, n] <= model.Bmax[i, j])
+                add_constr(d_assign, "sync_ts", model.Tsj[j, n] == model.Ts[i, n])
+                add_constr(d_assign, "sync_tf", model.Tfj[j, n] == model.Tf[i, n])
 
-                # Link y - Inequality
-                d.link_y_active = pyo.ConstraintList()
-                d.link_y_active.add(model.y[k, j, n] >= 1)
-                for other_i in compatible_tasks:
-                    if other_i != k:
-                        d.link_y_active.add(model.y[other_i, j, n] <= 0)
-                disjuncts.append(d)
+                # Skip: y=0, bj=0
+                add_constr(d_skip, "y_off", model.y[i, j, n] == 0)
+                add_constr(d_skip, "bj_zero", model.bj[i, j, n] == 0)
 
-            d_idle = gdp.Disjunct()
-            model.add_component(f"d_idle_{j}_{n}", d_idle)
-
-            d_idle.batch_zero = pyo.ConstraintList()
-            d_idle.link_y_zero = pyo.ConstraintList()
-            for i in compatible_tasks:
-                d_idle.batch_zero.add(model.bj[i, j, n] == 0)
-                d_idle.link_y_zero.add(model.y[i, j, n] <= 0)
-
-            disjuncts.append(d_idle)
-            model.add_component(f"Disj_Unit_{j}_{n}", gdp.Disjunction(expr=disjuncts))
-
-    # 3. Conditional Precedence (Pure GDP Implementation)
-    # Logic: Disjunction over [Predecessor Inactive] OR [Successor Inactive] OR [Enforce Precedence]
-    # This replaces the manual Big-M implication: W1=1 & W2=1 => Ts2 >= Tf1
-    def add_gdp_precedence(pair_set, prefix):
-        # Enumerate to create unique names
-        for idx, (i, ip, s) in enumerate(pair_set):
-            if n_max < 2:
-                continue
-            for n in model.n:
-                if n >= n_max:
-                    continue
-                # Ensure we only create for valid n, n+1
-
-                # Check bounds or existing logic for indices if necessary,
-                # but model.n iteration covers it.
-
-                # 1. Option A: Predecessor (ip) at n is Inactive
-                d_pred_inact = gdp.Disjunct()
-                d_pred_inact.c = pyo.Constraint(expr=model.W[ip, n] == 0)
-
-                # 2. Option B: Successor (i) at n+1 is Inactive
-                d_succ_inact = gdp.Disjunct()
-                d_succ_inact.c = pyo.Constraint(expr=model.W[i, n + 1] == 0)
-
-                # 3. Option C: Precedence Holds (Time constraint)
-                d_enforce = gdp.Disjunct()
-                d_enforce.c = pyo.Constraint(expr=model.Ts[i, n + 1] >= model.Tf[ip, n])
-
-                # Name components uniquely
-                nm = f"prec_{prefix}_{idx}_{n}"
-                model.add_component(f"d_pi_{nm}", d_pred_inact)
-                model.add_component(f"d_si_{nm}", d_succ_inact)
-                model.add_component(f"d_en_{nm}", d_enforce)
-
-                # The Disjunction: Solver must choose at least one valid state (Standard XOR)
-                # If both tasks are active, Disjuncts 1 and 2 are invalid, forcing Disjunct 3.
-                model.add_component(
-                    f"D_{nm}",
-                    gdp.Disjunction(expr=[d_pred_inact, d_succ_inact, d_enforce]),
+                d_active.add_component(
+                    f"Disj_unit_{j}", gdp.Disjunction(expr=[d_assign, d_skip])
                 )
 
-    add_gdp_precedence(model.ZWPrecedencePairs, "ZW")
-    add_gdp_precedence(model.NISPrecedencePairs, "NIS")
-    add_gdp_precedence(model.EcoPrecedencePairs, "Eco")
+            # --- Inactive Disjunct (not Y_{i,n}) ---
+            d_inactive = gdp.Disjunct()
+            model.add_component(f"d_inact_{i}_{n}", d_inactive)
+
+            add_constr(d_inactive, "b_zero", model.b[i, n] == 0)
+            add_constr(d_inactive, "duration", model.Tf[i, n] == model.Ts[i, n])
+            add_constr(d_inactive, "link_w", model.W[i, n] == 0)
+
+            d_inactive.y_zero = pyo.ConstraintList()
+            d_inactive.bj_zero = pyo.ConstraintList()
+            for j in compatible_units:
+                d_inactive.y_zero.add(model.y[i, j, n] == 0)
+                d_inactive.bj_zero.add(model.bj[i, j, n] == 0)
+
+            # Outer disjunction
+            model.add_component(
+                f"Disj_Task_{i}_{n}",
+                gdp.Disjunction(expr=[d_active, d_inactive]),
+            )
+
+    # A03: At most one task per unit per event
+    model.A03 = pyo.Constraint(
+        model.j,
+        model.n,
+        rule=lambda m, j, n: sum(m.y[i, j, n] for i in m.i if (i, j) in m.ij) <= 1,
+    )
+
+    # ========================================
+    # PRECEDENCE (Conditional Constraints, Eq. 2.2)
+    # ========================================
+
+    # General: Y_{i',n} and Y_{i,n+1} implies Ts_{i,n+1} >= Tf_{i',n}
+    model.prec_ge = pyo.Constraint(
+        [
+            (i_cons, i_prod, s, n)
+            for i_cons, i_prod, s in precedence_pairs
+            for n in model.n
+            if n < n_max
+        ],
+        rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
+        >= m.Tf[i_prod, n] - m.H * (2 - m.W[i_prod, n] - m.W[i_cons, n + 1]),
+    )
+
+    # ZW + NIS + Ecobulk: Y_{i',n} and Y_{i,n+1} implies Ts_{i,n+1} = Tf_{i',n}
+    zw_nis_eco_pairs = [
+        (i_cons, i_prod, s)
+        for i_cons, i_prod, s in precedence_pairs
+        if s in model.SZW or s in model.SNIS or s in model.SFISEco
+    ]
+    model.prec_le = pyo.Constraint(
+        [
+            (i_cons, i_prod, s, n)
+            for i_cons, i_prod, s in zw_nis_eco_pairs
+            for n in model.n
+            if n < n_max
+        ],
+        rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
+        <= m.Tf[i_prod, n] + m.H * (2 - m.W[i_prod, n] - m.W[i_cons, n + 1]),
+    )
+
+    # ========================================
+    # STORAGE PERSISTENCE (Logical Implications, Eq. 2.3)
+    # ========================================
+
+    # Y_{i,n} implies Y_{i,n+1}  for all i in I^st, n < N
+    for i in model.ist:
+        for n in model.n:
+            if n < n_max:
+                model.add_component(
+                    f"persist_task_{i}_{n}",
+                    pyo.LogicalConstraint(
+                        expr=active_disjuncts[i, n].indicator_var.implies(
+                            active_disjuncts[i, n + 1].indicator_var
+                        )
+                    ),
+                )
 
     # ========================================
     # OBJECTIVE FUNCTION
