@@ -90,7 +90,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
                 ij_data.append((task, unit))
     model.ij = pyo.Set(initialize=ij_data, dimen=2)
 
-    model.n = pyo.Set(initialize=[1, 2, 3, 4, 5, 6, 7])
+    model.n = pyo.Set(initialize=list(range(1, params["global"]["n_max"] + 1)))
 
     model.s = pyo.Set(
         initialize=[

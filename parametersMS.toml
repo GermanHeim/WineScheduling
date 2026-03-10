@@ -7,6 +7,9 @@
     # The "Big M" Horizon (total available hours in the model)
     H = 3600  # 150 days
 
+    # Number of event points
+    n_max = 10
+
     # Technical penalty weights (for objective function tuning) based on time (h)
     penaltyMaxUtilization = 0.25  # Penalty for not utilizing tanks fully
     penaltyEmptyTank = 10.0       # Penalty for leaving tanks empty
