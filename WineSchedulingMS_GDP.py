@@ -748,22 +748,8 @@ def solve_model(model, solver_name="gurobi", time_limit=3600):
         results.solver.termination_condition == pyo.TerminationCondition.optimal
         or results.solver.termination_condition == pyo.TerminationCondition.feasible
     ):
-        obj_val = pyo.value(model.OBJ, exception=False)
-        print(f"Objective: {obj_val}")
-        with open("results_gdp.txt", "w") as f:
-            f.write(f"Obj: {obj_val}\n")
-            for i in model.i:
-                for n in model.n:
-                    w_val = pyo.value(model.W[i, n], exception=False)
-                    if w_val is not None and w_val > 0.5:
-                        ts_val = pyo.value(model.Ts[i, n], exception=False)
-                        tf_val = pyo.value(model.Tf[i, n], exception=False)
-                        if ts_val is not None and tf_val is not None:
-                            f.write(f"Task {i} at {n}: Start {ts_val}, End {tf_val}\n")
-                        else:
-                            f.write(
-                                f"Task {i} at {n}: Active (Time vars uninitialized)\n"
-                            )
+        print(f"Objective: {pyo.value(model.OBJ, exception=False)}")
+        export_results(model, "Wine Scheduling GDP", "results_gdp.txt")
     else:
         print("No solution or Infeasible")
 
