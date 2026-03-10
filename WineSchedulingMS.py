@@ -21,6 +21,7 @@ in tanks.
 import pyomo.environ as pyo  # type: ignore
 from pyomo.opt import SolverFactory  # type: ignore
 import tomllib
+from utils import export_results
 
 
 def create_wine_scheduling_model(toml_file="parametersMS.toml"):
@@ -1121,54 +1122,6 @@ def solve_model(model, solver_name="gurobi", time_limit=3600):
     return results
 
 
-def export_results(model, filename="results.txt"):
-    """Export results to text file"""
-    with open(filename, "w") as f:
-        f.write("=" * 80 + "\n")
-        f.write("WINE SCHEDULING OPTIMIZATION RESULTS\n")
-        f.write("=" * 80 + "\n\n")
-
-        f.write(f"Objective Value: {pyo.value(model.OBJ):.2f}\n")
-        f.write(
-            f"Makespan: {pyo.value(model.MS):.2f} hours ({pyo.value(model.MS) / 24:.2f} days)\n"
-        )
-        f.write(f"Unused storage units: {pyo.value(model.JSTsinusar):.0f}\n\n")
-
-        f.write("FINAL PRODUCTION:\n")
-        f.write("-" * 80 + "\n")
-        for s in model.SP:
-            if pyo.value(model.ProdFinal[s]) > 0.01:
-                f.write(
-                    f"{s}: {pyo.value(model.ProdFinal[s]):.2f} L (Demand: {model.D[s]:.2f} L)\n"
-                )
-                if pyo.value(model.FueraDeposito[s]) > 0.01:
-                    f.write(
-                        f"  Out of deposit: {pyo.value(model.FueraDeposito[s]):.2f} L\n"
-                    )
-
-        f.write("\n" + "=" * 80 + "\n")
-        f.write("TASK SCHEDULE:\n")
-        f.write("=" * 80 + "\n")
-        for i in model.i:
-            for n in model.n:
-                if pyo.value(model.W[i, n]) > 0.5:
-                    f.write(f"\nTask {i}, Event {n}:\n")
-                    f.write(
-                        f"  Start: {pyo.value(model.Ts[i, n]):.2f} h, End: {pyo.value(model.Tf[i, n]):.2f} h\n"
-                    )
-                    f.write(
-                        f"  Duration: {pyo.value(model.Tf[i, n]) - pyo.value(model.Ts[i, n]):.2f} h\n"
-                    )
-                    f.write(f"  Batch: {pyo.value(model.b[i, n]):.2f} L\n")
-                    f.write("  Units: ")
-                    for j in model.j:
-                        if (i, j) in model.ij and pyo.value(model.y[i, j, n]) > 0.5:
-                            f.write(f"{j} ({pyo.value(model.bj[i, j, n]):.2f} L) ")
-                    f.write("\n")
-
-    print(f"Results exported to {filename}")
-
-
 def main():
     print("=" * 80)
     print("Wine Scheduling Optimization")
@@ -1187,7 +1140,7 @@ def main():
         results.solver.termination_condition == pyo.TerminationCondition.optimal
         or results.solver.termination_condition == pyo.TerminationCondition.feasible
     ):
-        export_results(model)
+        export_results(model, "Wine Scheduling Makespan Minimization", "results.txt")
 
     return model, results
 
