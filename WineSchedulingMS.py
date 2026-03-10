@@ -53,12 +53,15 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Validate templates
     required_templates = ["Fa", "Fl", "Fr", "Alm"]
+    storage_templates = {"Alm"}
     for template in required_templates:
         if template not in params["templates"]:
             raise ValueError(f"Missing template '{template}' in [templates] section")
         template_data = params["templates"][template]
-        if "alpha" not in template_data or "beta" not in template_data:
-            raise ValueError(f"Template '{template}' missing 'alpha' or 'beta'")
+        if template not in storage_templates and "alpha" not in template_data:
+            raise ValueError(f"Template '{template}' missing 'alpha'")
+        if "beta" not in template_data:
+            raise ValueError(f"Template '{template}' missing 'beta'")
         if "compatible_units" not in template_data:
             raise ValueError(f"Template '{template}' missing 'compatible_units'")
 
@@ -300,7 +303,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
         if prefix in params["templates"]:
             template = params["templates"][prefix]
-            model.alpha[task] = template["alpha"]
+            if "alpha" in template:
+                model.alpha[task] = template["alpha"]
             model.beta[task] = template["beta"]
 
             if "compatible_units" in template:
