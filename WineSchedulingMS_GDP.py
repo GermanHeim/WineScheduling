@@ -10,6 +10,7 @@ import pyomo.environ as pyo
 import pyomo.gdp as gdp
 import tomllib
 from pyomo.opt import SolverFactory
+from utils import export_results
 
 
 def create_wine_scheduling_model(toml_file="parametersMS.toml"):
