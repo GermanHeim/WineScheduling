@@ -746,8 +746,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 def solve_model(model, solver_name="gurobi", time_limit=3600):
     solver = SolverFactory(solver_name)
     if solver is None:
-        print("Solver not found")
+        print(f"Error: Solver {solver_name} not found")
         return None
+
+    # Set solver options
     solver.options["TimeLimit"] = time_limit
     solver.options["MIPGap"] = 0.001
 

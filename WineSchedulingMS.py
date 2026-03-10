@@ -1018,136 +1018,29 @@ def solve_model(model, solver_name="gurobi", time_limit=3600):
 
     # Set solver options
     solver.options["TimeLimit"] = time_limit
-    solver.options["MIPGap"] = 0.0  # optcr = 0 in GAMS
+    solver.options["MIPGap"] = 0.001
 
     print(f"\nSolving model with {solver_name}...")
-    print(f"Time limit: {time_limit} seconds")
-    print(f"Horizon: {pyo.value(model.H)} hours")
-
-    # Write LP file for debugging
-    # model.write("wine_scheduling_model.lp", io_options={"symbolic_solver_labels": True})
-    # print("LP file written to wine_scheduling_model.lp")
-
-    print(f"Vars: {model.nvariables()}, Cons: {model.nconstraints()}")
-
-    # Solve
     results = solver.solve(model, tee=True)
-
-    # Display results
-    print("\n" + "=" * 80)
-    print("SOLUTION STATUS")
-    print("=" * 80)
-    print(f"Solver Status: {results.solver.status}")
-    print(f"Termination Condition: {results.solver.termination_condition}")
-
-    # If infeasible or unbounded, try to diagnose
-    if (
-        results.solver.termination_condition
-        == pyo.TerminationCondition.infeasibleOrUnbounded
-    ):
-        print("\nModel is infeasible or unbounded.")
-        print("Trying to determine which by disabling dual reductions...")
-
-        # Disable dual reductions to distinguish infeasible from unbounded
-        solver.options["DualReductions"] = 0
-        results2 = solver.solve(model, tee=False)
-
-        if results2.solver.termination_condition == pyo.TerminationCondition.infeasible:
-            print("Model is INFEASIBLE.")
-
-            # Compute IIS to identify conflicting constraints
-            print("\nComputing Irreducible Inconsistent Subsystem (IIS)...")
-            try:
-                solver.options["IISMethod"] = 0
-                model.write("infeasible_model.lp")
-                # Need to get the GUROBI model object directly
-                from gurobipy import read
-
-                gurobi_model = read("infeasible_model.lp")
-                gurobi_model.computeIIS()
-                gurobi_model.write("model_iis.ilp")
-            except Exception as e:
-                print(f"Could not compute IIS: {e}")
-        elif (
-            results2.solver.termination_condition == pyo.TerminationCondition.unbounded
-        ):
-            print("Model is UNBOUNDED.")
-
-        # Restore original options
-        del solver.options["DualReductions"]
-        results = results2
 
     if (
         results.solver.termination_condition == pyo.TerminationCondition.optimal
         or results.solver.termination_condition == pyo.TerminationCondition.feasible
     ):
-        print(f"\nObjective Value (Makespan): {pyo.value(model.OBJ):.2f}")
-        print(
-            f"Makespan: {pyo.value(model.MS):.2f} hours ({pyo.value(model.MS) / 24:.2f} days)"
-        )
-
-        # Display production results
-        print("=" * 80)
-        print("FINAL PRODUCTION")
-        print("=" * 80)
-        for s in model.SP:
-            if pyo.value(model.ProdFinal[s]) > 0.01:
-                print(
-                    f"{s}: {pyo.value(model.ProdFinal[s]):.2f} L (Demand: {model.D[s]:.2f} L)"
-                )
-                if pyo.value(model.FueraDeposito[s]) > 0.01:
-                    print(
-                        f"  -> Out of deposit: {pyo.value(model.FueraDeposito[s]):.2f} L"
-                    )
-
-        # Display task schedule
-        print("\n" + "=" * 80)
-        print("TASK SCHEDULE")
-        print("=" * 80)
-        for i in model.i:
-            for n in model.n:
-                if pyo.value(model.W[i, n]) > 0.5:
-                    print(f"\nTask {i}, Event {n}:")
-                    print(
-                        f"  Start: {pyo.value(model.Ts[i, n]):.2f} h, End: {pyo.value(model.Tf[i, n]):.2f} h"
-                    )
-                    print(f"  Batch: {pyo.value(model.b[i, n]):.2f} L")
-                    print("  Units:", end=" ")
-                    for j in model.j:
-                        if (i, j) in model.ij and pyo.value(model.y[i, j, n]) > 0.5:
-                            print(
-                                f"{j} ({pyo.value(model.bj[i, j, n]):.2f} L)", end=" "
-                            )
-                    print()
-        print("\n" + "=" * 80)
+        print(f"Objective: {pyo.value(model.OBJ, exception=False)}")
+        export_results(model, "Wine Scheduling GDP", "results.txt")
     else:
-        print("\nNo optimal solution found!")
+        print("No solution or Infeasible")
 
     return results
 
 
-def main():
-    print("=" * 80)
-    print("Wine Scheduling Optimization")
-    print("=" * 80)
-
-    print("Creating optimization model...")
-    model = create_wine_scheduling_model()
-    print("Model created successfully")
-    print(f"  - {len(model.i)} tasks")
-    print(f"  - {len(model.j)} units")
-    print(f"  - {len(model.n)} events")
-    print(f"  - {len(model.s)} states")
-
-    results = solve_model(model, solver_name="gurobi", time_limit=3600)
-    if results and (
-        results.solver.termination_condition == pyo.TerminationCondition.optimal
-        or results.solver.termination_condition == pyo.TerminationCondition.feasible
-    ):
-        export_results(model, "Wine Scheduling Makespan Minimization", "results.txt")
-
-    return model, results
-
-
 if __name__ == "__main__":
-    model, results = main()
+    try:
+        model = create_wine_scheduling_model()
+        solve_model(model)
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+
+        traceback.print_exc()
