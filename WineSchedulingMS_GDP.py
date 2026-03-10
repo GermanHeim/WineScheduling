@@ -204,7 +204,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
         if prefix in params["templates"]:
             template = params["templates"][prefix]
-            model.alpha[task] = template["alpha"]
+            if "alpha" in template:
+                model.alpha[task] = template["alpha"]
             model.beta[task] = template["beta"]
             if "compatible_units" in template:
                 for unit, limits in template["compatible_units"].items():
@@ -595,13 +596,21 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             model.add_component(f"d_act_{i}_{n}", d_active)
             active_disjuncts[i, n] = d_active
 
-            # Duration equation
-            add_constr(
-                d_active,
-                "duration",
-                model.Tf[i, n]
-                == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
-            )
+            # Duration equation:
+            # - Non-storage tasks: Tf = Ts + alpha + beta * b  (fixed processing time)
+            # - Storage tasks (Alm): Tf = H  (they hold until the horizon)
+            #   The global A08 (Tf >= H * W) already enforces this, but the equality
+            #   is needed inside the disjunct so the hull reformulation is tight and
+            #   no contradiction arises with A08 when Ts < H - alpha.
+            if i in model.ist:
+                add_constr(d_active, "duration", model.Tf[i, n] == model.H)
+            else:
+                add_constr(
+                    d_active,
+                    "duration",
+                    model.Tf[i, n]
+                    == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
+                )
 
             # Batch aggregation: b = sum bj
             add_constr(
