@@ -765,9 +765,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.minimize)
 
-    # Apply Transformation
-    print("Applying GDP BigM transformation...")
-    pyo.TransformationFactory("gdp.hull").apply_to(model)
+    # Apply Transformation, set to "hull" or "bigm"
+    transformation_type = "hull"
+    print(f"Applying GDP {transformation_type} transformation...")
+    pyo.TransformationFactory(f"gdp.{transformation_type}").apply_to(model)
 
     return model
 
