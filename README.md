@@ -368,7 +368,7 @@ These constraints remain algebraic as they involve aggregation across the entire
 
 **Material Balances:**
 
-$$ ST_{s,n} = ST_{s,n-1} + \sum \rho^{prod} b_{n-1} - \sum \rho^{cons} b_{n} $$
+$$ ST_{s,n} = ST_{s,n-1} + \sum \rho^{prod} b_{n-1} + \sum \rho^{cons} b_{n} $$
 
 **Global Capacity:**
 
