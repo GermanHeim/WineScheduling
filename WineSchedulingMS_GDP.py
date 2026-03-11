@@ -269,8 +269,6 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # VARIABLES
     # ========================================
 
-    # Binary W and y for global sums/counts logic
-    model.W = pyo.Var(model.i, model.n, domain=pyo.Binary)
     model.y = pyo.Var(model.ij, model.n, domain=pyo.Binary)
 
     # Continuous Variables
@@ -317,6 +315,24 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     for sp in model.SP:
         if sp in ProdFinal_bounds:
             model.ProdFinal[sp].setub(ProdFinal_bounds[sp])
+
+    # ========================================
+    # DISJUNCT PRE-CREATION
+    # ========================================
+    # W_{i,n} = active_disjuncts[i, n].binary_indicator_var
+    # The GDP disjunct binary IS the task-activation variable. Pre-creating all
+    # disjuncts here makes binary_indicator_var available for the algebraic
+    # constraints below, no separate model.W Var or link_w constraints needed.
+    active_disjuncts = {}
+    inactive_disjuncts = {}
+    for i in model.i:
+        for n in model.n:
+            d_act = gdp.Disjunct()
+            d_inact = gdp.Disjunct()
+            model.add_component(f"d_act_{i}_{n}", d_act)
+            model.add_component(f"d_inact_{i}_{n}", d_inact)
+            active_disjuncts[i, n] = d_act
+            inactive_disjuncts[i, n] = d_inact
 
     # ========================================
     # CONSTRAINTS (Standard Algebraic)
@@ -391,11 +407,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.g17 = pyo.Constraint(model.SP, rule=lambda m, s: m.ProdFinal[s] >= m.D[s])
 
-    # A01/A02/A01st/A02st: Use original equations with Binary W and y
+    # A01/A02/A01st/A02st: unit-count bounds using disjunct binary_indicator_var as W
     def A01_rule(model, i, n):
         return (
             sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            <= model.jMax * model.W[i, n]
+            <= model.jMax * active_disjuncts[i, n].binary_indicator_var
         )
 
     model.A01 = pyo.Constraint(model.inst, model.n, rule=A01_rule)
@@ -403,7 +419,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     def A02_rule(model, i, n):
         return (
             sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            >= model.jMin * model.W[i, n]
+            >= model.jMin * active_disjuncts[i, n].binary_indicator_var
         )
 
     model.A02 = pyo.Constraint(model.inst, model.n, rule=A02_rule)
@@ -411,7 +427,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     def A01st_rule(model, i, n):
         return (
             sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            <= model.jMaxST * model.W[i, n]
+            <= model.jMaxST * active_disjuncts[i, n].binary_indicator_var
         )
 
     model.A01st = pyo.Constraint(model.ist, model.n, rule=A01st_rule)
@@ -419,7 +435,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     def A02st_rule(model, i, n):
         return (
             sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            >= model.jMinST * model.W[i, n]
+            >= model.jMinST * active_disjuncts[i, n].binary_indicator_var
         )
 
     model.A02st = pyo.Constraint(model.ist, model.n, rule=A02st_rule)
@@ -434,19 +450,26 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # A06: Max activations (non-storage tasks)
     model.A06 = pyo.Constraint(
-        model.inst, rule=lambda m, i: sum(m.W[i, n] for n in m.n) <= m.iMax
+        model.inst,
+        rule=lambda m, i: sum(active_disjuncts[i, n].binary_indicator_var for n in m.n)
+        <= m.iMax,
     )
     # A06st: Max activations (storage tasks)
     # With persistence (Eq. 2.3), W[i,n] is non-decreasing, so W[i, n_max] suffices.
-    model.A06st = pyo.Constraint(model.ist, rule=lambda m, i: m.W[i, n_max] <= m.iMaxST)
+    model.A06st = pyo.Constraint(
+        model.ist,
+        rule=lambda m, i: active_disjuncts[i, n_max].binary_indicator_var <= m.iMaxST,
+    )
     model.A07 = pyo.Constraint(
         model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.Ts[i, n]
     )
 
-    # A08: Need to link BigM constraint carefully or replace.
-    # Original: Tf >= H * W. This is algebraic, fine.
+    # A08: Tf >= H * W (W is the disjunct binary_indicator_var)
     model.A08 = pyo.Constraint(
-        model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.H * m.W[i, n]
+        model.ist,
+        model.n,
+        rule=lambda m, i, n: m.Tf[i, n]
+        >= m.H * active_disjuncts[i, n].binary_indicator_var,
     )
 
     # A09/A10: Unit event sequencing
@@ -461,14 +484,20 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Persistence
     def A13a_rule(model, i, ip, n):
-        return model.W[ip, n + 1] == model.W[i, n]
+        return (
+            active_disjuncts[ip, n + 1].binary_indicator_var
+            == active_disjuncts[i, n].binary_indicator_var
+        )
 
     model.A13a = pyo.Constraint(
         model.tc1, [n for n in model.n if n < n_max], rule=A13a_rule
     )
 
     def A13b_rule(model, i, ip, n):
-        return model.W[ip, n + 1] == model.W[i, n]
+        return (
+            active_disjuncts[ip, n + 1].binary_indicator_var
+            == active_disjuncts[i, n].binary_indicator_var
+        )
 
     model.A13b = pyo.Constraint(
         [
@@ -481,7 +510,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
 
     def A13c_rule(model, i, ip, n):
-        return model.W[ip, n + 1] <= model.W[i, n]
+        return (
+            active_disjuncts[ip, n + 1].binary_indicator_var
+            <= active_disjuncts[i, n].binary_indicator_var
+        )
 
     model.A13c = pyo.Constraint(
         [
@@ -506,7 +538,12 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
     model.A17 = pyo.Constraint(
         [s for s in model.SFISEco if model.MustUseEcobulk == 1],
-        rule=lambda m, s: sum(m.W[i, n] for i in m.i for n in m.n if (i, s) in m.ICS)
+        rule=lambda m, s: sum(
+            active_disjuncts[i, n].binary_indicator_var
+            for i in m.i
+            for n in m.n
+            if (i, s) in m.ICS
+        )
         >= 1,
     )
 
@@ -572,17 +609,14 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     def add_constr(block, name, expr):
         block.add_component(name, pyo.Constraint(expr=expr))
 
-    # Store references for LogicalConstraint persistence (Eq. 2.3)
-    active_disjuncts = {}
+    # assign_disjuncts stores unit-selection sub-disjuncts (used in LogicalConstraints)
     assign_disjuncts = {}
 
     for i in model.i:
         compatible_units = [j for j in model.j if (i, j) in model.ij]
         for n in model.n:
-            # --- Active Disjunct (Y_{i,n}) ---
-            d_active = gdp.Disjunct()
-            model.add_component(f"d_act_{i}_{n}", d_active)
-            active_disjuncts[i, n] = d_active
+            # Retrieve pre-created disjuncts, binary_indicator_var IS W_{i,n}
+            d_active = active_disjuncts[i, n]
 
             # Duration equation:
             # - Non-storage tasks: Tf = Ts + alpha + beta * b  (fixed processing time)
@@ -607,9 +641,6 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
                 model.b[i, n] == sum(model.bj[i, j, n] for j in compatible_units),
             )
 
-            # Link W (implied by Y_{i,n} in pure GDP)
-            add_constr(d_active, "link_w", model.W[i, n] == 1)
-
             # Nested unit selection: ⋁_{j in J_i}
             for j in compatible_units:
                 d_assign = gdp.Disjunct()
@@ -633,13 +664,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
                     f"Disj_unit_{j}", gdp.Disjunction(expr=[d_assign, d_skip])
                 )
 
-            # --- Inactive Disjunct (not Y_{i,n}) ---
-            d_inactive = gdp.Disjunct()
-            model.add_component(f"d_inact_{i}_{n}", d_inactive)
+            # Inactive Disjunct (not W_{i,n})
+            d_inactive = inactive_disjuncts[i, n]
 
             add_constr(d_inactive, "b_zero", model.b[i, n] == 0)
             add_constr(d_inactive, "duration", model.Tf[i, n] == model.Ts[i, n])
-            add_constr(d_inactive, "link_w", model.W[i, n] == 0)
 
             d_inactive.y_zero = pyo.ConstraintList()
             d_inactive.bj_zero = pyo.ConstraintList()
@@ -664,7 +693,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # PRECEDENCE (Conditional Constraints, Eq. 2.2)
     # ========================================
 
-    # General: Y_{i',n} and Y_{i,n+1} implies Ts_{i,n+1} >= Tf_{i',n}
+    # General: W_{i',n} and W_{i,n+1} both active implies Ts_{i,n+1} >= Tf_{i',n}
     model.prec_ge = pyo.Constraint(
         [
             (i_cons, i_prod, s, n)
@@ -673,10 +702,16 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             if n < n_max
         ],
         rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
-        >= m.Tf[i_prod, n] - m.H * (2 - m.W[i_prod, n] - m.W[i_cons, n + 1]),
+        >= m.Tf[i_prod, n]
+        - m.H
+        * (
+            2
+            - active_disjuncts[i_prod, n].binary_indicator_var
+            - active_disjuncts[i_cons, n + 1].binary_indicator_var
+        ),
     )
 
-    # ZW + NIS + Ecobulk: Y_{i',n} and Y_{i,n+1} implies Ts_{i,n+1} = Tf_{i',n}
+    # ZW + NIS + Ecobulk: W_{i',n} and W_{i,n+1} both active implies Ts_{i,n+1} = Tf_{i',n}
     zw_nis_eco_pairs = [
         (i_cons, i_prod, s)
         for i_cons, i_prod, s in precedence_pairs
@@ -690,7 +725,13 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             if n < n_max
         ],
         rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
-        <= m.Tf[i_prod, n] + m.H * (2 - m.W[i_prod, n] - m.W[i_cons, n + 1]),
+        <= m.Tf[i_prod, n]
+        + m.H
+        * (
+            2
+            - active_disjuncts[i_prod, n].binary_indicator_var
+            - active_disjuncts[i_cons, n + 1].binary_indicator_var
+        ),
     )
 
     # ========================================

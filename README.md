@@ -299,8 +299,7 @@ Task activation and unit selection are combined into a single nested disjunction
 
 $$\forall i \in I, n \in N:
 \begin{bmatrix}
-Y_{i,n} \\
-W_{i,n} = 1 \\
+W_{i,n} \\
 Tf_{i,n} = \begin{cases} Ts_{i,n} + \alpha_i + \beta_i b_{i,n} & i \in I^{nst} \\ H & i \in I^{st} \end{cases} \\
 b_{i,n} = \sum_{j \in J_i} b_{i,j,n} \\
 \bigvee_{j \in J_i} \begin{bmatrix}
@@ -317,8 +316,7 @@ b_{i,j,n} = 0
 \end{bmatrix}
 \underline{\vee}
 \begin{bmatrix}
-\neg Y_{i,n} \\
-W_{i,n} = 0 \\
+\neg W_{i,n} \\
 b_{i,n} = 0 \\
 Tf_{i,n} = Ts_{i,n} \\
 \forall j \in J_i: y_{i,j,n} = 0, \; b_{i,j,n} = 0
@@ -360,7 +358,7 @@ $$ Ts_{i,n+1} \le Tf_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
 
 Persistence rules for storage tasks are expressed as pure logical implications on disjunct indicator variables, rather than algebraic inequality chains:
 
-$$ Y_{i,n} \implies Y_{i,n+1} \quad \forall i \in I^{st}, n < N $$
+$$ W_{i,n} \implies W_{i,n+1} \quad \forall i \in I^{st}, n < N $$
 
 This means once a storage task activates at event $n$, it must remain active for all subsequent events. The unit-level persistence ($y_{i,j,n} \implies y_{i,j,n+1}$) is retained as an algebraic constraint (A15).
 
@@ -382,5 +380,5 @@ $$ \sum_{j} y_{i,j,n} \le jMax \cdot W_{i,n} $$
 
 ### 5. Variable Definitions (GDP Adaptations)
 
-- **Binaries ($W, y$):** Retained for global accounting (sums, persistence); forced to correct values by the disjunction constraints (`W=1` in active, `W=0` in inactive).
-- **Booleans:** Disjunct indicator variables are the GDP booleans; no separate `BooleanVar` declarations needed.
+- **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and all algebraic constraints (A01, A06, A08, precedence, etc.).
+- **$y_{i,j,n}$:** Unit assignment binary; retained for global constraints (A03, batch limits).

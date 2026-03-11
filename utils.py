@@ -41,10 +41,17 @@ def export_results(model, model_name, filename=None):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Collect task schedule data
+    def task_active(model, i, n):
+        """Return True if task i is active at event n, works for both GDP and non-GDP models."""
+        if hasattr(model, "W"):
+            return pyo.value(model.W[i, n]) > 0.5
+        d_act = model.find_component(f"d_act_{i}_{n}")
+        return d_act is not None and pyo.value(d_act.binary_indicator_var) > 0.5
+
     task_schedule = []
     for i in model.i:
         for n in model.n:
-            if pyo.value(model.W[i, n]) > 0.5:
+            if task_active(model, i, n):
                 start = pyo.value(model.Ts[i, n])
                 end = pyo.value(model.Tf[i, n])
                 batch = pyo.value(model.b[i, n])
