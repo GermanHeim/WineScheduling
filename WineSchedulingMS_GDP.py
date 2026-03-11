@@ -26,15 +26,21 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # SETS
     # ========================================
 
-    # Generate tasks from lines
-    lines = params["lines"]["idx"]
+    # Generate tasks from per-line step definitions
+    lines_cfg = params["lines"]
+    lines = list(lines_cfg.keys())
     tasks = []
-    for prefix in ["Fa", "Fl", "Fr", "Alm"]:
-        for line in lines:
-            tasks.append(f"{prefix}{line}")
+    for line, cfg in lines_cfg.items():
+        for step in cfg["steps"]:
+            tasks.append(f"{step}{line}")
+
+    # Derived line groups (used for states, ICS/IPS and tc1)
+    no_fl_lines = {l for l, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
+    ist_lines = {l for l, cfg in lines_cfg.items() if "Alm" in cfg["steps"]}
+    eco_lines = {l for l, cfg in lines_cfg.items() if cfg.get("ecobulk", False)}
 
     model.i = pyo.Set(initialize=tasks)
-    model.ist = pyo.Set(initialize=["Alm2", "Alm3", "Alm5"])
+    model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
     model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])
     model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Fr")])
     model.inpst = pyo.Set(initialize=[t for t in tasks if t.startswith(("Fa", "Fl"))])
@@ -92,35 +98,20 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.n = pyo.Set(initialize=list(range(1, params["global"]["n_max"] + 1)))
 
-    model.s = pyo.Set(
-        initialize=[
-            "s1",
-            "v1",
-            "vl1",
-            "p1",
-            "s2",
-            "v2",
-            "vl2",
-            "p2",
-            "s3",
-            "v3",
-            "vl3",
-            "p3",
-            "s4",
-            "v4",
-            "vl4",
-            "p4",
-            "s5",
-            "v5",
-            "vl5",
-            "p5",
-            "s6",
-            "v6",
-            "vl6",
-            "p6",
-            "dsch",
-        ]
-    )
+    # States - built dynamically from line step definitions:
+    #   s{l}: raw material
+    #   v{l}: after Fa (zero-wait intermediate)
+    #   vl{l}: after Fl (NIS intermediate, only when Fl is in steps)
+    #   p{l}: final product
+    #   dsch: discard / discharge balance state
+    states = ["dsch"]
+    for line, cfg in lines_cfg.items():
+        states.append(f"s{line}")
+        states.append(f"v{line}")
+        if "Fl" in cfg["steps"]:
+            states.append(f"vl{line}")
+        states.append(f"p{line}")
+    model.s = pyo.Set(initialize=states)
 
     # States logic
     IPS_data = []
@@ -136,7 +127,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             IPS_data.append((task, f"vl{line}"))
             IPS_data.append((task, "dsch"))
         elif task.startswith("Fr"):
-            ICS_data.append((task, f"vl{line}"))
+            # No-Fl lines: Fr consumes v{line} directly; others consume vl{line}
+            if str(line) in no_fl_lines:
+                ICS_data.append((task, f"v{line}"))
+            else:
+                ICS_data.append((task, f"vl{line}"))
             IPS_data.append((task, f"p{line}"))
         elif task.startswith("Alm"):
             ICS_data.append((task, f"p{line}"))
@@ -144,34 +139,27 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
     model.ICS = pyo.Set(initialize=ICS_data, dimen=2)
 
-    model.SR = pyo.Set(initialize=["s1", "s2", "s3", "s4", "s5", "s6"])
-    model.SP = pyo.Set(initialize=["dsch", "p1", "p2", "p3", "p4", "p5", "p6"])
+    model.SR = pyo.Set(initialize=[f"s{l}" for l in lines])
+    model.SP = pyo.Set(initialize=["dsch"] + [f"p{l}" for l in lines])
     model.SI = model.s - model.SP - model.SR
-    model.SFISEco = pyo.Set(initialize=["p2", "p3", "p5"])
-    model.SFISBar = pyo.Set(initialize=["p1", "p4", "p6"])
-    model.SZW = pyo.Set(initialize=["v1", "v2", "v3", "v4", "v5", "v6"])
-    model.SNIS = pyo.Set(initialize=["vl1", "vl2", "vl3", "vl4", "vl5", "vl6"])
-
-    tc1_data = [
-        ("Fa1", "Fl1"),
-        ("Fl1", "Fr1"),
-        ("Fa2", "Fl2"),
-        ("Fl2", "Fr2"),
-        ("Fa3", "Fl3"),
-        ("Fl3", "Fr3"),
-        ("Fa4", "Fl4"),
-        ("Fl4", "Fr4"),
-        ("Fa5", "Fl5"),
-        ("Fl5", "Fr5"),
-        ("Fa6", "Fl6"),
-        ("Fl6", "Fr6"),
-    ]
-    model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
-    tc2_data = [("Fr2", "Alm2"), ("Fr3", "Alm3"), ("Fr5", "Alm5")]
-    model.tc2 = pyo.Set(initialize=tc2_data, dimen=2)
-    model.prd = pyo.Set(
-        initialize=["Vino1", "Vino2", "Vino3", "Vino4", "Vino5", "Vino6"]
+    model.SFISEco = pyo.Set(initialize=[f"p{l}" for l in eco_lines])
+    model.SFISBar = pyo.Set(
+        initialize=[f"p{l}" for l in lines if l not in eco_lines and l not in ist_lines]
     )
+    model.SZW = pyo.Set(initialize=[f"v{l}" for l in lines])
+    model.SNIS = pyo.Set(initialize=[f"vl{l}" for l in lines if l not in no_fl_lines])
+
+    tc1_data = []
+    for line in lines:
+        if line in no_fl_lines:
+            tc1_data.append((f"Fa{line}", f"Fr{line}"))
+        else:
+            tc1_data.append((f"Fa{line}", f"Fl{line}"))
+            tc1_data.append((f"Fl{line}", f"Fr{line}"))
+    model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
+    tc2_data = [(f"Fr{l}", f"Alm{l}") for l in ist_lines]
+    model.tc2 = pyo.Set(initialize=tc2_data, dimen=2)
+    model.prd = pyo.Set(initialize=[f"Vino{l}" for l in lines])
 
     # ========================================
     # PARAMETERS

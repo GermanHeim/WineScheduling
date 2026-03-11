@@ -44,6 +44,26 @@
         name = "p6"
         demand = 10000
 
+    [products.p7]
+        name = "p7"
+        demand = 4000
+
+    [products.p8]
+        name = "p8"
+        demand = 6000
+
+    [products.p9]
+        name = "p9"
+        demand = 10000
+
+    [products.p10]
+        name = "p10"
+        demand = 7500
+
+    [products.p11]
+        name = "p11"
+        demand = 8500
+
 # 3. Initial Inventory - Vineyard/Reception
 #
 # 'ST0': Initial Stock at Time = 0
@@ -54,6 +74,11 @@
     s4 = 400000
     s5 = 600000
     s6 = 150000
+    s7 = 70000
+    s8 = 90000
+    s9 = 80000
+    s10 = 85000
+    s11 = 85000
 
 # 4. Upper Bounds for the Model
 #
@@ -68,13 +93,60 @@
     p4 = 4000
     p5 = 10000
     p6 = 10000
+    p7 = 4000
+    p8 = 6000
+    p9 = 10000
+    p10 = 7500
+    p11 = 8500
 
 # 5. Product Lines
-# 
-# This list tells Python to generate tasks for lines 1 to 6
-# Since there are 6 production lines (6 Fa, 6 Fl, 6 Fr, 6 Alm)
-[lines]
-idx = ["1", "2", "3", "4", "5", "6"]
+#
+# Each [lines.N] entry defines one production line.
+#
+# steps: ordered list of processing tasks for this line
+#        Fa = alcoholic fermentation
+#        Fl = lactic (malolactic) fermentation
+#        Fr = cold stabilization / filtration
+#        Alm = long-term storage
+# ecobulk: (optional, default false)
+#          true -> product is stored in ecobulk-type tanks (subject to A16/A17)
+#          false -> no ecobulk constraint
+
+[lines.1]
+steps = ["Fa", "Fl", "Fr"]
+
+[lines.2]
+steps = ["Fa", "Fl", "Fr", "Alm"]
+ecobulk = true
+
+[lines.3]
+steps = ["Fa", "Fl", "Fr", "Alm"]
+ecobulk = true
+
+[lines.4]
+steps = ["Fa", "Fl", "Fr"]
+
+[lines.5]
+steps = ["Fa", "Fl", "Fr", "Alm"]
+ecobulk = true
+
+[lines.6]
+steps = ["Fa", "Fl", "Fr"]
+
+[lines.7]
+steps = ["Fa", "Fr"]
+
+[lines.8]
+steps = ["Fa", "Fr"]
+
+[lines.9]
+steps = ["Fa", "Fr"]
+
+[lines.10]
+steps = ["Fa", "Fr"]
+
+[lines.11]
+steps = ["Fa", "Fl", "Fr"]
 
 # 6. Tasks Templates
 # 
@@ -159,6 +231,14 @@ idx = ["1", "2", "3", "4", "5", "6"]
     rhoIScons = {s6 = -1.0}
     rhoISprod = {v6 = 0.7}
 
+[rho.Fa7]
+    rhoIScons = {s7 = -1.0}
+    rhoISprod = {v7 = 0.7}
+
+[rho.Fa8]
+    rhoIScons = {s8 = -1.0}
+    rhoISprod = {v8 = 0.7}
+
 [rho.Fl1]
     rhoIScons = {v1 = -1.0}
     rhoISprod = {vl1 = 0.9}
@@ -206,6 +286,44 @@ idx = ["1", "2", "3", "4", "5", "6"]
 [rho.Fr6]
     rhoIScons = {vl6 = -1.0}
     rhoISprod = {p6 = 1.0}
+
+# Lines 7 and 8 skip lactic fermentation: Fr consumes v{line} directly
+[rho.Fr7]
+    rhoIScons = {v7 = -1.0}
+    rhoISprod = {p7 = 1.0}
+
+[rho.Fr8]
+    rhoIScons = {v8 = -1.0}
+    rhoISprod = {p8 = 1.0}
+
+[rho.Fa9]
+    rhoIScons = {s9 = -1.0}
+    rhoISprod = {v9 = 0.7}
+
+[rho.Fa10]
+    rhoIScons = {s10 = -1.0}
+    rhoISprod = {v10 = 0.7}
+
+[rho.Fa11]
+    rhoIScons = {s11 = -1.0}
+    rhoISprod = {v11 = 0.7}
+
+[rho.Fl11]
+    rhoIScons = {v11 = -1.0}
+    rhoISprod = {vl11 = 0.9}
+
+# Lines 9 and 10 skip lactic fermentation: Fr consumes v{line} directly
+[rho.Fr9]
+    rhoIScons = {v9 = -1.0}
+    rhoISprod = {p9 = 1.0}
+
+[rho.Fr10]
+    rhoIScons = {v10 = -1.0}
+    rhoISprod = {p10 = 1.0}
+
+[rho.Fr11]
+    rhoIScons = {vl11 = -1.0}
+    rhoISprod = {p11 = 1.0}
 
 [rho.Alm1]
     rhoIScons = {p1 = -1.0}
