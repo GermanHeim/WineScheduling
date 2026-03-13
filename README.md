@@ -300,7 +300,6 @@ Task activation and unit selection are combined into a single nested disjunction
 $$\forall i \in I, n \in N:
 \begin{bmatrix}
 W_{i,n} \\
-b_{i,n} = \sum_{j \in J_i} b_{i,j,n} \\
 Tf_{i,n} = Ts_{i,n} + \alpha_i + \beta_i b_{i,n} \quad (i \in I^{nst}) \\
 \bigvee_{j \in J_i} \begin{bmatrix}
 y_{i,j,n} = 1 \\
@@ -367,6 +366,10 @@ These constraints remain algebraic as they involve aggregation across the entire
 **Material Balances:**
 
 $$ ST_{s,n} = ST_{s,n-1} + \sum \rho^{prod} b_{n-1} + \sum \rho^{cons} b_{n} $$
+
+**Batch Aggregation (A04):**
+
+$$ b_{i,n} = \sum_{j \in J_i} b_{i,j,n} $$
 
 **Global Capacity:**
 
