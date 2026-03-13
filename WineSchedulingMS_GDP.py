@@ -284,7 +284,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Continuous Variables
     model.b = pyo.Var(model.i, model.n, domain=pyo.NonNegativeReals)
-    model.bj = pyo.Var(model.i, model.j, model.n, domain=pyo.NonNegativeReals)
+    model.bj = pyo.Var(model.ij, model.n, domain=pyo.NonNegativeReals)
 
     # Set upper bounds for bj and b to allow BigM estimation
     # Find global max capacity
@@ -303,8 +303,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             b_ub_i = max_tank_cap * len(model.j)  # Fallback for unexpected sparse data
         for n in model.n:
             model.b[i, n].setub(b_ub_i)
-            for j in model.j:
-                model.bj[i, j, n].setub(max_tank_cap)
+
+    for i, j in model.ij:
+        for n in model.n:
+            model.bj[i, j, n].setub(max_tank_cap)
 
     model.ST = pyo.Var(model.s, model.n, domain=pyo.NonNegativeReals)
     model.Ts = pyo.Var(
