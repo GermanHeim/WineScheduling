@@ -465,14 +465,6 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.Ts[i, n]
     )
 
-    # A08: Tf >= H * W (W is the disjunct binary_indicator_var)
-    model.A08 = pyo.Constraint(
-        model.ist,
-        model.n,
-        rule=lambda m, i, n: m.Tf[i, n]
-        >= m.H * active_disjuncts[i, n].binary_indicator_var,
-    )
-
     # A09/A10: Unit event sequencing
     model.A09 = pyo.Constraint(
         model.j,
@@ -619,15 +611,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             # Retrieve pre-created disjuncts, binary_indicator_var IS W_{i,n}
             d_active = active_disjuncts[i, n]
 
-            # Duration equation:
-            # - Non-storage tasks: Tf = Ts + alpha + beta * b  (fixed processing time)
-            # - Storage tasks (Alm): Tf = H  (they hold until the horizon)
-            #   The global A08 (Tf >= H * W) already enforces this, but the equality
-            #   is needed inside the disjunct so the hull reformulation is tight and
-            #   no contradiction arises with A08 when Ts < H - alpha.
-            if i in model.ist:
-                add_constr(d_active, "duration", model.Tf[i, n] == model.H)
-            else:
+            # Duration equation for non-storage tasks only.
+            # Storage persistence is enforced through logical assignment/activity
+            # persistence across events, not by forcing Tf = H.
+            if i not in model.ist:
                 add_constr(
                     d_active,
                     "duration",

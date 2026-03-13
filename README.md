@@ -300,8 +300,8 @@ Task activation and unit selection are combined into a single nested disjunction
 $$\forall i \in I, n \in N:
 \begin{bmatrix}
 W_{i,n} \\
-Tf_{i,n} = \begin{cases} Ts_{i,n} + \alpha_i + \beta_i b_{i,n} & i \in I^{nst} \\ H & i \in I^{st} \end{cases} \\
 b_{i,n} = \sum_{j \in J_i} b_{i,j,n} \\
+Tf_{i,n} = Ts_{i,n} + \alpha_i + \beta_i b_{i,n} \quad (i \in I^{nst}) \\
 \bigvee_{j \in J_i} \begin{bmatrix}
 y_{i,j,n} = 1 \\
 B^{min}_{i,j} \le b_{i,j,n} \le B^{max}_{i,j} \\
@@ -329,8 +329,6 @@ $$ \sum_{i} y_{i,j,n} \le 1 \quad \forall j, n $$
 Duration in the active disjunct differs by task type:
 
 $$\text{Non-storage } (i \in I^{nst}): \quad Tf_{i,n} = Ts_{i,n} + \alpha_i + \beta_i b_{i,n}$$
-
-$$\text{Storage } (i \in I^{st}): \quad Tf_{i,n} = H$$
 
 Storage tasks do not have a fixed processing duration, once activated they occupy the vessel until the planning horizon ends. Applying the non-storage duration equality $Tf = Ts + \alpha$ to storage tasks (where $\alpha \ll H$) would force $Ts \ge H - \alpha$, making solutions where storage starts early infeasible inside the hull relaxation. The equality $Tf = H$ is the disjunctive counterpart of the global constraint A08 ($Tf_{i,n} \ge H \cdot W_{i,n}$).
 
