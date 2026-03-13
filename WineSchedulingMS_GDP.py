@@ -10,6 +10,7 @@ import pyomo.environ as pyo
 import pyomo.gdp as gdp
 import tomllib
 from pyomo.opt import SolverFactory
+
 from utils import export_results
 
 
@@ -683,111 +684,49 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
 
     # ========================================
-    # PRECEDENCE (Disjunctive, Eq. 2.2)
+    # PRECEDENCE (Conditional Constraints, Eq. 2.2)
     # ========================================
 
-    # General precedence: inactive producer OR inactive consumer OR both active with Ts >= Tf
-    for i_cons, i_prod, s in precedence_pairs:
-        for n in model.n:
-            if n >= n_max:
-                continue
+    # General: W_{i',n} and W_{i,n+1} both active implies Ts_{i,n+1} >= Tf_{i',n}
+    model.prec_ge = pyo.Constraint(
+        [
+            (i_cons, i_prod, s, n)
+            for i_cons, i_prod, s in precedence_pairs
+            for n in model.n
+            if n < n_max
+        ],
+        rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
+        >= m.Tf[i_prod, n]
+        - m.H
+        * (
+            2
+            - active_disjuncts[i_prod, n].binary_indicator_var
+            - active_disjuncts[i_cons, n + 1].binary_indicator_var
+        ),
+    )
 
-            d_prod_off = gdp.Disjunct()
-            d_cons_off = gdp.Disjunct()
-            d_both_on = gdp.Disjunct()
-
-            add_constr(
-                d_prod_off,
-                "prod_off",
-                active_disjuncts[i_prod, n].binary_indicator_var == 0,
-            )
-            add_constr(
-                d_cons_off,
-                "cons_off",
-                active_disjuncts[i_cons, n + 1].binary_indicator_var == 0,
-            )
-            add_constr(
-                d_both_on,
-                "prod_on",
-                active_disjuncts[i_prod, n].binary_indicator_var == 1,
-            )
-            add_constr(
-                d_both_on,
-                "cons_on",
-                active_disjuncts[i_cons, n + 1].binary_indicator_var == 1,
-            )
-            add_constr(
-                d_both_on,
-                "order_ge",
-                model.Ts[i_cons, n + 1] >= model.Tf[i_prod, n],
-            )
-
-            model.add_component(
-                f"d_prec_prod_off_{i_cons}_{i_prod}_{s}_{n}", d_prod_off
-            )
-            model.add_component(
-                f"d_prec_cons_off_{i_cons}_{i_prod}_{s}_{n}", d_cons_off
-            )
-            model.add_component(f"d_prec_both_on_{i_cons}_{i_prod}_{s}_{n}", d_both_on)
-            model.add_component(
-                f"Disj_precedence_{i_cons}_{i_prod}_{s}_{n}",
-                gdp.Disjunction(expr=[d_prod_off, d_cons_off, d_both_on]),
-            )
-
-    # ZW/NIS/Ecobulk precedence: inactive producer OR inactive consumer OR both active with Ts == Tf
+    # ZW + NIS + Ecobulk: W_{i',n} and W_{i,n+1} both active implies Ts_{i,n+1} = Tf_{i',n}
     zw_nis_eco_pairs = [
         (i_cons, i_prod, s)
         for i_cons, i_prod, s in precedence_pairs
         if s in model.SZW or s in model.SNIS or s in model.SFISEco
     ]
-    for i_cons, i_prod, s in zw_nis_eco_pairs:
-        for n in model.n:
-            if n >= n_max:
-                continue
-
-            d_prod_off = gdp.Disjunct()
-            d_cons_off = gdp.Disjunct()
-            d_both_on = gdp.Disjunct()
-
-            add_constr(
-                d_prod_off,
-                "prod_off",
-                active_disjuncts[i_prod, n].binary_indicator_var == 0,
-            )
-            add_constr(
-                d_cons_off,
-                "cons_off",
-                active_disjuncts[i_cons, n + 1].binary_indicator_var == 0,
-            )
-            add_constr(
-                d_both_on,
-                "prod_on",
-                active_disjuncts[i_prod, n].binary_indicator_var == 1,
-            )
-            add_constr(
-                d_both_on,
-                "cons_on",
-                active_disjuncts[i_cons, n + 1].binary_indicator_var == 1,
-            )
-            add_constr(
-                d_both_on,
-                "order_eq",
-                model.Ts[i_cons, n + 1] == model.Tf[i_prod, n],
-            )
-
-            model.add_component(
-                f"d_prec_eq_prod_off_{i_cons}_{i_prod}_{s}_{n}", d_prod_off
-            )
-            model.add_component(
-                f"d_prec_eq_cons_off_{i_cons}_{i_prod}_{s}_{n}", d_cons_off
-            )
-            model.add_component(
-                f"d_prec_eq_both_on_{i_cons}_{i_prod}_{s}_{n}", d_both_on
-            )
-            model.add_component(
-                f"Disj_precedence_eq_{i_cons}_{i_prod}_{s}_{n}",
-                gdp.Disjunction(expr=[d_prod_off, d_cons_off, d_both_on]),
-            )
+    model.prec_le = pyo.Constraint(
+        [
+            (i_cons, i_prod, s, n)
+            for i_cons, i_prod, s in zw_nis_eco_pairs
+            for n in model.n
+            if n < n_max
+        ],
+        rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
+        <= m.Tf[i_prod, n]
+        + m.H
+        * (
+            2
+            - active_disjuncts[i_prod, n].binary_indicator_var
+            - active_disjuncts[i_cons, n + 1].binary_indicator_var
+        ),
+    )
 
     # ========================================
     # STORAGE PERSISTENCE (Logical Implications, Eq. 2.3)

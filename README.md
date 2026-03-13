@@ -333,35 +333,23 @@ Storage tasks do not have a fixed processing duration, once activated they occup
 
 ### 2. Global Precedence Logic (Eq. 2.2)
 
-Precedence is now modeled directly with GDP disjunctions (no manual Big-M linearization).
+Instead of 3-way disjunctions, precedence is expressed as conditional constraints using Big-M implications on $W$.
 
 **General Precedence:**
 
 $$ W_{i',n} = 1 \land W_{i,n+1} = 1 \implies Ts_{i,n+1} \ge Tf_{i',n} $$
 
-Encoded as a 3-way disjunction:
+Linearized as:
 
-$$
-\big[W_{i',n}=0\big]
-\;\underline{\vee}\;
-\big[W_{i,n+1}=0\big]
-\;\underline{\vee}\;
-\big[W_{i',n}=1,\;W_{i,n+1}=1,\;Ts_{i,n+1} \ge Tf_{i',n}\big]
-$$
+$$ Ts_{i,n+1} \ge Tf_{i',n} - H(2 - W_{i',n} - W_{i,n+1}) $$
 
 **Zero-Wait / No-Intermediate-Storage / Ecobulk (equality when both active):**
 
 $$ W_{i',n} = 1 \land W_{i,n+1} = 1 \implies Ts_{i,n+1} = Tf_{i',n} $$
 
-Encoded with the same 3-way pattern, replacing the ordering inequality by equality:
+Linearized as the $\ge$ above plus:
 
-$$
-\big[W_{i',n}=0\big]
-\;\underline{\vee}\;
-\big[W_{i,n+1}=0\big]
-\;\underline{\vee}\;
-\big[W_{i',n}=1,\;W_{i,n+1}=1,\;Ts_{i,n+1} = Tf_{i',n}\big]
-$$
+$$ Ts_{i,n+1} \le Tf_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
 
 ### 3. Storage Persistence via Logical Implications (Eq. 2.3)
 
@@ -393,5 +381,5 @@ $$ \sum_{j} y_{i,j,n} \le jMax \cdot W_{i,n} $$
 
 ### 5. Variable Definitions (GDP Adaptations)
 
-- **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and all algebraic constraints (A01, A06, precedence, etc.).
+- **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and all algebraic constraints (A01, A06, A08, precedence, etc.).
 - **$y_{i,j,n}$:** Unit assignment binary; retained for global constraints (A03, batch limits).
