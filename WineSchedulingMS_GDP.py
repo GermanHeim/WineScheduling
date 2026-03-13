@@ -164,13 +164,14 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # ========================================
     # PARAMETERS
     # ========================================
-    model.iMax = pyo.Param(initialize=1)
-    model.jMax = pyo.Param(initialize=1)
-    model.jMin = pyo.Param(initialize=1)
-    model.iMaxST = pyo.Param(initialize=1)
-    model.jMaxST = pyo.Param(initialize=2)
-    model.jMinST = pyo.Param(initialize=1)
-    model.MustUseEcobulk = pyo.Param(initialize=0)
+    global_cfg = params.get("global", {})
+    model.iMax = pyo.Param(initialize=global_cfg.get("iMax", 1))
+    model.jMax = pyo.Param(initialize=global_cfg.get("jMax", 1))
+    model.jMin = pyo.Param(initialize=global_cfg.get("jMin", 1))
+    model.iMaxST = pyo.Param(initialize=global_cfg.get("iMaxST", 1))
+    model.jMaxST = pyo.Param(initialize=global_cfg.get("jMaxST", 2))
+    model.jMinST = pyo.Param(initialize=global_cfg.get("jMinST", 1))
+    model.MustUseEcobulk = pyo.Param(initialize=global_cfg.get("MustUseEcobulk", 0))
 
     model.ST0 = pyo.Param(model.s, initialize=params["initial_inventory"], default=0)
     model.STmax = pyo.Param(model.s, initialize=0)

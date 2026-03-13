@@ -8,7 +8,19 @@
     H = 3600  # 150 days
 
     # Number of event points
-    n_max = 10
+    n_max = 14
+
+    # Activation/unit assignment limits
+    iMax = 1
+    jMax = 1
+    jMin = 1
+    iMaxST = 1
+    jMaxST = 2
+    jMinST = 1
+
+    # =1 if the model forces wines using ecobulk to use some kind of tank for final storage
+    # =0 if it is optimized
+    MustUseEcobulk = 0
 
     # Technical penalty weights (for objective function tuning) based on time (h)
     penaltyMaxUtilization = 0.25  # Penalty for not utilizing tanks fully
