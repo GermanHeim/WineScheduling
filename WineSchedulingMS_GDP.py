@@ -245,12 +245,23 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Sparse Index Sets
     n_max = max(model.n)
 
+    # Build precedence pairs from state-indexed producer/consumer maps.
+    producer_tasks_by_state = {s: [] for s in model.s}
+    consumer_tasks_by_state = {s: [] for s in model.s}
+
+    for i_prod, s in model.IPS:
+        producer_tasks_by_state[s].append(i_prod)
+    for i_cons, s in model.ICS:
+        consumer_tasks_by_state[s].append(i_cons)
+
     precedence_pairs = [
         (i, ip, s)
-        for i in model.i
-        for ip in model.i
+        (i_cons, i_prod, s)
         for s in model.s
         if i != ip and (i, s) in model.ICS and (ip, s) in model.IPS
+        for i_cons in consumer_tasks_by_state[s]
+        for i_prod in producer_tasks_by_state[s]
+        if i_cons != i_prod
     ]
     model.PrecedencePairs = pyo.Set(initialize=precedence_pairs, dimen=3)
     model.ZWPrecedencePairs = pyo.Set(
