@@ -255,10 +255,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         consumer_tasks_by_state[s].append(i_cons)
 
     precedence_pairs = [
-        (i, ip, s)
         (i_cons, i_prod, s)
         for s in model.s
-        if i != ip and (i, s) in model.ICS and (ip, s) in model.IPS
         for i_cons in consumer_tasks_by_state[s]
         for i_prod in producer_tasks_by_state[s]
         if i_cons != i_prod
