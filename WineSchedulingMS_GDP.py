@@ -297,8 +297,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         max_tank_cap = 500000  # Fallback
 
     for i in model.i:
+        b_ub_i = sum(pyo.value(model.Bmax[i, j]) for j in model.j if (i, j) in model.ij)
+        if b_ub_i <= 0:
+            b_ub_i = max_tank_cap * len(model.j)  # Fallback for unexpected sparse data
         for n in model.n:
-            model.b[i, n].setub(max_tank_cap * len(model.j))  # Conservative upper bound
+            model.b[i, n].setub(b_ub_i)
             for j in model.j:
                 model.bj[i, j, n].setub(max_tank_cap)
 
