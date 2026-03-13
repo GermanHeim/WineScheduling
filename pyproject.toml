@@ -5,8 +5,8 @@ description = "Wine Scheduling Optimization"
 readme = "README.md"
 requires-python = "==3.13.11"
 dependencies = [
-    "gurobipy>=13.0.0",
+    "gurobipy>=13.0.1",
     "matplotlib>=3.10.8",
     "numpy>=2.3.5",
-    "pyomo>=6.9.5",
+    "pyomo>=6.10.0",
 ]
