@@ -622,13 +622,6 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
                     == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
                 )
 
-            # Batch aggregation: b = sum bj
-            add_constr(
-                d_active,
-                "batch_sum",
-                model.b[i, n] == sum(model.bj[i, j, n] for j in compatible_units),
-            )
-
             # Nested unit selection: ⋁_{j in J_i}
             for j in compatible_units:
                 d_assign = gdp.Disjunct()
