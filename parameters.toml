@@ -102,7 +102,7 @@ idx = ["1", "2", "3", "4", "5", "6"]
 #
 # Fermentation (Fa)
 [templates.Fa]
-    alpha = 144.0  # Duration
+    alpha = 240.0  # Duration
     beta = 0.0
     # Consumes S1, S2...
     input_suffix = "S" 
@@ -119,7 +119,7 @@ idx = ["1", "2", "3", "4", "5", "6"]
 
 # Malolactic fermentation (Fl)
 [templates.Fl]
-    alpha = 504.0
+    alpha = 720.0
     beta = 0.0
     input_suffix = "V"
     output_suffix = "Vl"

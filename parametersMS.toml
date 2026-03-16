@@ -166,7 +166,7 @@ steps = ["Fa", "Fl", "Fr"]
 #
 # Fermentation (Fa)
 [templates.Fa]
-    alpha = 144.0  # Duration
+    alpha = 240.0  # Duration
     beta = 0.0
     
     # Allowed Tanks and Limits [Bmin, Bmax]
@@ -178,7 +178,7 @@ steps = ["Fa", "Fl", "Fr"]
 
 # Malolactic fermentation (Fl)
 [templates.Fl]
-    alpha = 504.0
+    alpha = 720.0
     beta = 0.0
     
     # Allowed Tanks and Limits [Bmin, Bmax]
