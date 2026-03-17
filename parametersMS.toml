@@ -30,50 +30,62 @@
 # 2. Products - Prices, Demand, Outsourcing Costs
 #
 # 'name': Product Name
+# 'category': Wine style (Red, White, Rose)
 # 'demand': Demand (L)
 [products]
-    [products.p1]
-        name = "p1"
+    [products.Red1]
+        name = "Cabernet Reserva"
+        category = "Red"
         demand = 1134
 
-    [products.p2]
-        name = "p2"
+    [products.White1]
+        name = "Sauvignon Blanc"
+        category = "White"
         demand = 3465
-    
-    [products.p3]
-        name = "p3"
+
+    [products.Rose1]
+        name = "Rose de Verano"
+        category = "Rose"
         demand = 3780
 
-    [products.p4]
-        name = "p4"
+    [products.Red2]
+        name = "Merlot Clasico"
+        category = "Red"
         demand = 4000
 
-    [products.p5]
-        name = "p5"
-        demand = 10000
-    
-    [products.p6]
-        name = "p6"
+    [products.White2]
+        name = "Chardonnay Roble"
+        category = "White"
         demand = 10000
 
-    [products.p7]
-        name = "p7"
+    [products.Rose2]
+        name = "Rose Andino"
+        category = "Rose"
+        demand = 10000
+
+    [products.Red3]
+        name = "Malbec Joven"
+        category = "Red"
         demand = 4000
 
-    [products.p8]
-        name = "p8"
+    [products.White3]
+        name = "Semillon Fresco"
+        category = "White"
         demand = 6000
 
-    [products.p9]
-        name = "p9"
+    [products.Rose3]
+        name = "Rose Patagonia"
+        category = "Rose"
         demand = 10000
 
-    [products.p10]
-        name = "p10"
+    [products.Red4]
+        name = "Syrah de Altura"
+        category = "Red"
         demand = 7500
 
-    [products.p11]
-        name = "p11"
+    [products.White4]
+        name = "Torrontes Aromatico"
+        category = "White"
         demand = 8500
 
 # 3. Initial Inventory - Vineyard/Reception
@@ -99,23 +111,24 @@
 # This is equivalent to adding an explicit constraint,
 # but implemented as a variable bound, which is tighter and better for MIP performance.
 [product_ub]
-    p1 = 1134
-    p2 = 3465
-    p3 = 3780
-    p4 = 4000
-    p5 = 10000
-    p6 = 10000
-    p7 = 4000
-    p8 = 6000
-    p9 = 10000
-    p10 = 7500
-    p11 = 8500
+    Red1 = 1134
+    White1 = 3465
+    Rose1 = 3780
+    Red2 = 4000
+    White2 = 10000
+    Rose2 = 10000
+    Red3 = 4000
+    White3 = 6000
+    Rose3 = 10000
+    Red4 = 7500
+    White4 = 8500
 
 # 5. Product Lines
 #
 # Each [lines.N] entry defines one production line.
 #
 # steps: ordered list of processing tasks for this line
+#        Pr = pressing (separates liquid from skins/seeds)
 #        Fa = alcoholic fermentation
 #        Fl = lactic (malolactic) fermentation
 #        Fr = cold stabilization / filtration
@@ -125,50 +138,70 @@
 #          false -> no ecobulk constraint
 
 [lines.1]
+product = "Red1"
 steps = ["Fa", "Fl", "Fr"]
 
 [lines.2]
-steps = ["Fa", "Fl", "Fr", "Alm"]
+product = "White1"
+steps = ["Pr", "Fa", "Fl", "Fr", "Alm"]
 ecobulk = true
 
 [lines.3]
-steps = ["Fa", "Fl", "Fr", "Alm"]
+product = "Rose1"
+steps = ["Pr", "Fa", "Fl", "Fr", "Alm"]
 ecobulk = true
 
 [lines.4]
+product = "Red2"
 steps = ["Fa", "Fl", "Fr"]
 
 [lines.5]
-steps = ["Fa", "Fl", "Fr", "Alm"]
+product = "White2"
+steps = ["Pr", "Fa", "Fl", "Fr", "Alm"]
 ecobulk = true
 
 [lines.6]
-steps = ["Fa", "Fl", "Fr"]
+product = "Rose2"
+steps = ["Pr", "Fa", "Fl", "Fr"]
 
 [lines.7]
-steps = ["Fa", "Fr"]
-
-[lines.8]
-steps = ["Fa", "Fr"]
-
-[lines.9]
-steps = ["Fa", "Fr"]
-
-[lines.10]
-steps = ["Fa", "Fr"]
-
-[lines.11]
+product = "Red3"
 steps = ["Fa", "Fl", "Fr"]
 
+[lines.8]
+product = "White3"
+steps = ["Pr", "Fa", "Fr"]
+
+[lines.9]
+product = "Rose3"
+steps = ["Pr", "Fa", "Fr"]
+
+[lines.10]
+product = "Red4"
+steps = ["Fa", "Fl", "Fr"]
+
+[lines.11]
+product = "White4"
+steps = ["Pr", "Fa", "Fl", "Fr"]
+
 # 6. Tasks Templates
-# 
+#
 # These rules apply to ALL lines
 #
+# Pressing (Pr)
+[templates.Pr]
+    alpha = 8.0
+    beta = 0.0
+
+    # Allowed units and limits [Bmin, Bmax]
+    [templates.Pr.compatible_units]
+        press = [500, 16000]
+
 # Fermentation (Fa)
 [templates.Fa]
     alpha = 240.0  # Duration
     beta = 0.0
-    
+
     # Allowed Tanks and Limits [Bmin, Bmax]
     [templates.Fa.compatible_units]
         inox5000  = [500, 4000]
@@ -180,10 +213,10 @@ steps = ["Fa", "Fl", "Fr"]
 [templates.Fl]
     alpha = 720.0
     beta = 0.0
-    
+
     # Allowed Tanks and Limits [Bmin, Bmax]
     [templates.Fl.compatible_units]
-        inox22000  = [4400, 21560] 
+        inox22000  = [4400, 21560]
         subte6300  = [1260, 6174]
         subte7500  = [1500, 7350]
         subte9000  = [1800, 8820]
@@ -194,7 +227,7 @@ steps = ["Fa", "Fl", "Fr"]
 [templates.Fr]
     alpha = 168.0
     beta = 0.0
-    
+
     # Allowed Tanks and Limits [Bmin, Bmax]
     [templates.Fr.compatible_units]
         iso5000  = [1000, 5000]
@@ -203,7 +236,7 @@ steps = ["Fa", "Fl", "Fr"]
 # Storage (Alm)
 [templates.Alm]
     beta = 0.0
-    
+
     # Allowed Tanks and Limits [Bmin, Bmax]
     [templates.Alm.compatible_units]
         inox22000  = [20900, 22000]
@@ -216,40 +249,80 @@ steps = ["Fa", "Fl", "Fr"]
         iso10000   = [9500, 10000]
 
 # 7. State Consumption/Production Coefficients (rho)
-# 
+#
 # These define how much of each state is consumed/produced per unit batch size
-# for each task type. Applied to all lines (1-6) of each task type.
+# for each task type.
 [rho.Fa1]
     rhoIScons = {s1 = -1.0}
     rhoISprod = {v1 = 0.7}
 
 [rho.Fa2]
-    rhoIScons = {s2 = -1.0}
-    rhoISprod = {v2 = 0.7}
+    rhoIScons = {m2 = -1.0}
+    rhoISprod = {v2 = 1.0}
 
 [rho.Fa3]
-    rhoIScons = {s3 = -1.0}
-    rhoISprod = {v3 = 0.7}
+    rhoIScons = {m3 = -1.0}
+    rhoISprod = {v3 = 1.0}
 
 [rho.Fa4]
     rhoIScons = {s4 = -1.0}
     rhoISprod = {v4 = 0.7}
 
 [rho.Fa5]
-    rhoIScons = {s5 = -1.0}
-    rhoISprod = {v5 = 0.7}
+    rhoIScons = {m5 = -1.0}
+    rhoISprod = {v5 = 1.0}
 
 [rho.Fa6]
-    rhoIScons = {s6 = -1.0}
-    rhoISprod = {v6 = 0.7}
+    rhoIScons = {m6 = -1.0}
+    rhoISprod = {v6 = 1.0}
 
 [rho.Fa7]
     rhoIScons = {s7 = -1.0}
     rhoISprod = {v7 = 0.7}
 
 [rho.Fa8]
+    rhoIScons = {m8 = -1.0}
+    rhoISprod = {v8 = 1.0}
+
+[rho.Fa9]
+    rhoIScons = {m9 = -1.0}
+    rhoISprod = {v9 = 1.0}
+
+[rho.Fa10]
+    rhoIScons = {s10 = -1.0}
+    rhoISprod = {v10 = 0.7}
+
+[rho.Fa11]
+    rhoIScons = {m11 = -1.0}
+    rhoISprod = {v11 = 1.0}
+
+[rho.Pr2]
+    rhoIScons = {s2 = -1.0}
+    rhoISprod = {m2 = 0.7, dsch = 0.3}
+
+[rho.Pr3]
+    rhoIScons = {s3 = -1.0}
+    rhoISprod = {m3 = 0.7, dsch = 0.3}
+
+[rho.Pr5]
+    rhoIScons = {s5 = -1.0}
+    rhoISprod = {m5 = 0.7, dsch = 0.3}
+
+[rho.Pr6]
+    rhoIScons = {s6 = -1.0}
+    rhoISprod = {m6 = 0.7, dsch = 0.3}
+
+[rho.Pr8]
     rhoIScons = {s8 = -1.0}
-    rhoISprod = {v8 = 0.7}
+    rhoISprod = {m8 = 0.7, dsch = 0.3}
+
+[rho.Pr9]
+    rhoIScons = {s9 = -1.0}
+    rhoISprod = {m9 = 0.7, dsch = 0.3}
+
+[rho.Pr11]
+    rhoIScons = {s11 = -1.0}
+    rhoISprod = {m11 = 0.7, dsch = 0.3}
 
 [rho.Fl1]
     rhoIScons = {v1 = -1.0}
@@ -275,88 +348,82 @@ steps = ["Fa", "Fl", "Fr"]
     rhoIScons = {v6 = -1.0}
     rhoISprod = {vl6 = 0.9}
 
-[rho.Fr1]
-    rhoIScons = {vl1 = -1.0}
-    rhoISprod = {p1 = 1.0}
-
-[rho.Fr2]
-    rhoIScons = {vl2 = -1.0}
-    rhoISprod = {p2 = 1.0}
-
-[rho.Fr3]
-    rhoIScons = {vl3 = -1.0}
-    rhoISprod = {p3 = 1.0}
-
-[rho.Fr4]
-    rhoIScons = {vl4 = -1.0}
-    rhoISprod = {p4 = 1.0}
-
-[rho.Fr5]
-    rhoIScons = {vl5 = -1.0}
-    rhoISprod = {p5 = 1.0}
-
-[rho.Fr6]
-    rhoIScons = {vl6 = -1.0}
-    rhoISprod = {p6 = 1.0}
-
-# Lines 7 and 8 skip lactic fermentation: Fr consumes v{line} directly
-[rho.Fr7]
+[rho.Fl7]
     rhoIScons = {v7 = -1.0}
-    rhoISprod = {p7 = 1.0}
+    rhoISprod = {vl7 = 0.9}
 
-[rho.Fr8]
-    rhoIScons = {v8 = -1.0}
-    rhoISprod = {p8 = 1.0}
-
-[rho.Fa9]
-    rhoIScons = {s9 = -1.0}
-    rhoISprod = {v9 = 0.7}
-
-[rho.Fa10]
-    rhoIScons = {s10 = -1.0}
-    rhoISprod = {v10 = 0.7}
-
-[rho.Fa11]
-    rhoIScons = {s11 = -1.0}
-    rhoISprod = {v11 = 0.7}
+[rho.Fl10]
+    rhoIScons = {v10 = -1.0}
+    rhoISprod = {vl10 = 0.9}
 
 [rho.Fl11]
     rhoIScons = {v11 = -1.0}
     rhoISprod = {vl11 = 0.9}
 
-# Lines 9 and 10 skip lactic fermentation: Fr consumes v{line} directly
+[rho.Fr1]
+    rhoIScons = {vl1 = -1.0}
+    rhoISprod = {Red1 = 1.0}
+
+[rho.Fr2]
+    rhoIScons = {vl2 = -1.0}
+    rhoISprod = {White1 = 1.0}
+
+[rho.Fr3]
+    rhoIScons = {vl3 = -1.0}
+    rhoISprod = {Rose1 = 1.0}
+
+[rho.Fr4]
+    rhoIScons = {vl4 = -1.0}
+    rhoISprod = {Red2 = 1.0}
+
+[rho.Fr5]
+    rhoIScons = {vl5 = -1.0}
+    rhoISprod = {White2 = 1.0}
+
+[rho.Fr6]
+    rhoIScons = {vl6 = -1.0}
+    rhoISprod = {Rose2 = 1.0}
+
+[rho.Fr7]
+    rhoIScons = {vl7 = -1.0}
+    rhoISprod = {Red3 = 1.0}
+
+[rho.Fr8]
+    rhoIScons = {v8 = -1.0}
+    rhoISprod = {White3 = 1.0}
+
 [rho.Fr9]
     rhoIScons = {v9 = -1.0}
-    rhoISprod = {p9 = 1.0}
+    rhoISprod = {Rose3 = 1.0}
 
 [rho.Fr10]
-    rhoIScons = {v10 = -1.0}
-    rhoISprod = {p10 = 1.0}
+    rhoIScons = {vl10 = -1.0}
+    rhoISprod = {Red4 = 1.0}
 
 [rho.Fr11]
     rhoIScons = {vl11 = -1.0}
-    rhoISprod = {p11 = 1.0}
+    rhoISprod = {White4 = 1.0}
 
 [rho.Alm1]
-    rhoIScons = {p1 = -1.0}
-    rhoISprod = {p1 = 1.0}
+    rhoIScons = {Red1 = -1.0}
+    rhoISprod = {Red1 = 1.0}
 
 [rho.Alm2]
-    rhoIScons = {p2 = -1.0}
-    rhoISprod = {p2 = 1.0}
+    rhoIScons = {White1 = -1.0}
+    rhoISprod = {White1 = 1.0}
 
 [rho.Alm3]
-    rhoIScons = {p3 = -1.0}
-    rhoISprod = {p3 = 1.0}
+    rhoIScons = {Rose1 = -1.0}
+    rhoISprod = {Rose1 = 1.0}
 
 [rho.Alm4]
-    rhoIScons = {p4 = -1.0}
-    rhoISprod = {p4 = 1.0}
+    rhoIScons = {Red2 = -1.0}
+    rhoISprod = {Red2 = 1.0}
 
 [rho.Alm5]
-    rhoIScons = {p5 = -1.0}
-    rhoISprod = {p5 = 1.0}
+    rhoIScons = {White2 = -1.0}
+    rhoISprod = {White2 = 1.0}
 
 [rho.Alm6]
-    rhoIScons = {p6 = -1.0}
-    rhoISprod = {p6 = 1.0}
+    rhoIScons = {Rose2 = -1.0}
+    rhoISprod = {Rose2 = 1.0}
