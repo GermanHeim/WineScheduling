@@ -13,6 +13,64 @@ from pyomo.opt import SolverFactory
 
 from utils import export_results
 
+# Apply Transformation, set to "hull" or "bigm"
+transformation_type = "hull"
+
+
+def add_cover_cuts(model):
+    """
+    Cover-cut tightening of the LP relaxation.
+
+    For each (i, n) adds:
+        b[i, n] <= sum_j( Bmax[i, j] * y[i, j, n] )
+
+    Follows directly from A04  (b[i,n] = sum_j bj[i,j,n])  and the
+    disjunctive bounds  bj[i,j,n] <= Bmax[i,j]  when y[i,j,n]=1  and
+    bj[i,j,n] = 0  when y[i,j,n]=0.  No feasible integer point is cut.
+
+    After the bigm transformation the disjunctive bounds become
+        bj <= Bmax + M*(1 - y)
+
+    where M may be loose.  The cover cut gives the LP a direct, tight
+    linear relationship between b and the y binaries without depending
+    on the solver to derive it from the bigm expansion.
+    """
+    # Precompute compatible (j, rounded-Bmax) lists per task once.
+    # round() matches the tolerance used in add_heterogeneous_symmetry_breaking
+    # and guards against floating-point noise in computed parameters.
+    compatible_by_task: dict = {}
+    cover_indices = []
+
+    for i in model.i:
+        pairs = [
+            (j, round(pyo.value(model.Bmax[i, j]), 6))
+            for j in model.j
+            if (i, j) in model.ij
+        ]
+        if not pairs:
+            continue
+        compatible_by_task[i] = pairs
+        for n in model.n:
+            cover_indices.append((i, n))
+
+    if not cover_indices:
+        print(
+            "  [cover_cut] No compatible (task, unit) pairs found; "
+            "no cover-cut constraints added."
+        )
+        return
+
+    def cover_rule(m, i, n):
+        return m.b[i, n] <= sum(
+            bmax_val * m.y[i, j, n] for j, bmax_val in compatible_by_task[i]
+        )
+
+    model.cover_cut = pyo.Constraint(cover_indices, rule=cover_rule)
+    print(
+        f"  [cover_cut] Added {len(cover_indices)} cover-cut constraints "
+        f"across {len(compatible_by_task)} tasks."
+    )
+
 
 def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     """Create and return the wine scheduling optimization model with GDP"""
@@ -761,8 +819,14 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.minimize)
 
-    # Apply Transformation, set to "hull" or "bigm"
-    transformation_type = "hull"
+    # ========================================
+    # LP TIGHTENING
+    # ========================================
+    # The helper must be called after y / Bmin / Bmax are fully
+    # initialised and before the GDP transformation flattens the disjuncts.
+    if transformation_type == "bigm":
+        add_cover_cuts(model)
+
     print(f"Applying GDP {transformation_type} transformation...")
     pyo.TransformationFactory(f"gdp.{transformation_type}").apply_to(model)
 
