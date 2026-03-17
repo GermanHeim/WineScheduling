@@ -44,7 +44,6 @@ This lets the same formulation handle very different behaviors just by set membe
 - $B_{i,j}^{min}, B_{i,j}^{max}$: Min/Max batch size for task $i$ in unit $j$
 - $H$: Time horizon
 - $D_s$: Demand for state $s$
-- $M$: Big-M parameter
 
 Activation and unit-assignment limits:
 
