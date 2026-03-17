@@ -35,9 +35,6 @@ def add_cover_cuts(model):
     linear relationship between b and the y binaries without depending
     on the solver to derive it from the bigm expansion.
     """
-    # Precompute compatible (j, rounded-Bmax) lists per task once.
-    # round() matches the tolerance used in add_heterogeneous_symmetry_breaking
-    # and guards against floating-point noise in computed parameters.
     compatible_by_task: dict = {}
     cover_indices = []
 
