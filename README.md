@@ -46,6 +46,15 @@ This lets the same formulation handle very different behaviors just by set membe
 - $D_s$: Demand for state $s$
 - $M$: Big-M parameter
 
+Activation and unit-assignment limits:
+
+- `iMax`: Maximum number of activations for non-storage tasks
+- `jMax`: Maximum number of units assigned to an active non-storage task at an event
+- `jMin`: Minimum number of units assigned to an active non-storage task at an event
+- `iMaxST`: Maximum activation indicator for storage tasks (applied at final event)
+- `jMaxST`: Maximum number of units assigned to an active storage task at an event
+- `jMinST`: Minimum number of units assigned to an active storage task at an event
+
 ## Decision Variables
 
 - $W_{i,n} \in \{0,1\}$: 1 if task $i$ is active in event $n$ (does task i occur at event n?)
