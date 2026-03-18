@@ -5,21 +5,25 @@ Usage:
     python plot_solution.py                 # plots results.txt
     python plot_solution.py results_gdp.txt # plots a specific file
     python plot_solution.py --no-show       # save to PNG without showing
+    python plot_solution.py --stn --no-show # also plot the STN graph
 
 Produces two figures:
     1. Gantt chart of the task schedule (one bar per unit)
     2. Bar chart of final production vs. demand per product
 """
 
+import argparse
 import re
 import sys
-import argparse
+import tomllib
 from pathlib import Path
-import matplotlib.pyplot as plt
+
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator
 
 TASK_COLORS: dict[str, str] = {
+    "Pr": "#C06C84",  # pressing
     "Fa": "#E07B54",  # alcoholic fermentation
     "Fl": "#5B8DB8",  # lactic fermentation
     "Fr": "#6BBF7A",  # filtration
@@ -28,6 +32,7 @@ TASK_COLORS: dict[str, str] = {
 
 # Unit order for the y-axis
 UNIT_ORDER: list[str] = [
+    "press",
     "inox5000",
     "inox10000",
     "inox17500",
@@ -42,6 +47,7 @@ UNIT_ORDER: list[str] = [
 ]
 
 UNIT_GROUP_LABELS: dict[str, str] = {
+    "press": "Press",
     "inox5000": "Inox tanks",
     "inox10000": "Inox tanks",
     "inox17500": "Inox tanks",
@@ -78,12 +84,13 @@ def parse_results(filepath: str) -> dict:
         tasks = parse_task_schedule(text)
 
     meta["tasks"] = tasks
+    meta["wine_metadata"] = parse_wine_metadata(text)
     meta["production"] = parse_production(text)
     return meta
 
 
 def parse_metadata(text: str) -> dict:
-    meta = {}
+    meta: dict[str, object] = {}
 
     lines = text.splitlines()
     for i, line in enumerate(lines):
@@ -106,6 +113,25 @@ def parse_metadata(text: str) -> dict:
     meta["unused_units"] = int(uu.group(1)) if uu else None
 
     return meta
+
+
+def parse_wine_metadata(text: str) -> dict[str, dict[str, str]]:
+    wine_map: dict[str, dict[str, str]] = {}
+    section = re.search(r"WINE METADATA.*?\n[-]+\n(.*?)(?:\n={5,}|\Z)", text, re.DOTALL)
+    if not section:
+        return wine_map
+
+    for line in section.group(1).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split(",", 3)]
+        if len(parts) != 4:
+            continue
+        _, product, name, category = parts
+        wine_map[product] = {"name": name, "category": category}
+
+    return wine_map
 
 
 def parse_txt(section_text: str) -> list[dict]:
@@ -171,19 +197,28 @@ def parse_task_schedule(text: str) -> list[dict]:
 def parse_production(text: str) -> list[dict]:
     production = []
     for m in re.finditer(
-        r"(p\d+|dsch):\s*([\d.]+)\s*L\s*\(Demand:\s*([\d.]+)\s*L\)", text
+        r"([A-Za-z0-9_]+):\s*([\d.]+)\s*L\s*\(Demand:\s*([\d.]+)\s*L\)(?:\s*\[(.*?)\])?",
+        text,
     ):
+        wine_name = ""
+        category = ""
+        if m.group(4):
+            parts = [part.strip() for part in m.group(4).split("|", 1)]
+            if len(parts) == 2:
+                wine_name, category = parts
         production.append(
             {
                 "product": m.group(1),
                 "produced": float(m.group(2)),
                 "demand": float(m.group(3)),
+                "name": wine_name,
+                "category": category,
                 # "outsourced": 0.0,
             }
         )
     if not production:
         for m in re.finditer(
-            r"(p\d+|dsch):\s*Produced=([\d.]+)L,\s*Outsourced=([\d.]+)L,\s*Demand=([\d.]+)L",
+            r"([A-Za-z0-9_]+):\s*Produced=([\d.]+)L,\s*Outsourced=([\d.]+)L,\s*Demand=([\d.]+)L",
             text,
         ):
             production.append(
@@ -195,6 +230,353 @@ def parse_production(text: str) -> list[dict]:
                 }
             )
     return production
+
+
+def task_stage(task_name: str) -> str:
+    return "".join(ch for ch in task_name if ch.isalpha())
+
+
+def task_line(task_name: str) -> str:
+    return "".join(ch for ch in task_name if ch.isdigit())
+
+
+def parse_stn_data(toml_file: str) -> dict:
+    with open(toml_file, "rb") as f:
+        params = tomllib.load(f)
+
+    lines_cfg = params.get("lines", {})
+    products = params.get("products", {})
+    initial_inventory = params.get("initial_inventory", {})
+    product_ub = params.get("product_ub", {})
+    rho_cfg = params.get("rho", {})
+
+    tasks = []
+    line_product = {}
+    for line, cfg in lines_cfg.items():
+        line_product[line] = cfg["product"]
+        for step in cfg["steps"]:
+            tasks.append(f"{step}{line}")
+
+    states: set[str] = {"dsch"}
+    for line, cfg in lines_cfg.items():
+        states.add(f"s{line}")
+        if "Pr" in cfg["steps"]:
+            states.add(f"m{line}")
+        states.add(f"v{line}")
+        if "Fl" in cfg["steps"]:
+            states.add(f"vl{line}")
+        states.add(cfg["product"])
+
+    arcs = []
+    for task in tasks:
+        rho = rho_cfg.get(task, {})
+        for state, value in rho.get("rhoIScons", {}).items():
+            if value < 0:
+                arcs.append(
+                    {
+                        "src": state,
+                        "dst": task,
+                        "coef": abs(float(value)),
+                        "kind": "cons",
+                    }
+                )
+                states.add(state)
+        for state, value in rho.get("rhoISprod", {}).items():
+            if value > 0:
+                arcs.append(
+                    {
+                        "src": task,
+                        "dst": state,
+                        "coef": float(value),
+                        "kind": "prod",
+                    }
+                )
+                states.add(state)
+
+    return {
+        "tasks": tasks,
+        "states": sorted(states),
+        "arcs": arcs,
+        "lines_cfg": lines_cfg,
+        "line_product": line_product,
+        "products": products,
+        "initial_inventory": initial_inventory,
+        "product_ub": product_ub,
+    }
+
+
+def format_arc_label(value: float) -> str:
+    if 0 <= value <= 1.5:
+        return f"{value * 100:.0f}%"
+    return f"{value:.2f}"
+
+
+def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
+    lines_cfg = stn_data["lines_cfg"]
+    tasks = stn_data["tasks"]
+    states = stn_data["states"]
+    line_product = stn_data["line_product"]
+
+    sorted_lines = sorted(lines_cfg.keys(), key=lambda x: int(x))
+    y_by_line = {line: -idx for idx, line in enumerate(sorted_lines)}
+
+    stage_x = {
+        "Pr": 1.3,
+        "Fa": 2.3,
+        "Fl": 3.4,
+        "Fr": 4.5,
+        "Alm": 5.6,
+    }
+
+    # Place material states between the stages that consume/produce them to preserve
+    # the visual causal direction (e.g.: s -> Pr -> m -> Fa).
+    state_x = {
+        "s": 0.2,
+        "m": 1.8,
+        "v": 2.95,
+        "vl": 3.95,
+        "p": 6.6,
+    }
+
+    pos: dict[str, tuple[float, float]] = {}
+
+    for task in tasks:
+        line = task_line(task)
+        stage = task_stage(task)
+        pos[task] = (stage_x.get(stage, 3.0), y_by_line[line])
+
+    for state in states:
+        if state == "dsch":
+            pos[state] = (6.8, 1.2)
+            continue
+
+        line = ""
+        if state.startswith(("s", "m", "v")) and state != "vl":
+            line = "".join(ch for ch in state if ch.isdigit())
+        elif state.startswith("vl"):
+            line = state[2:]
+        else:
+            for candidate, product in line_product.items():
+                if product == state:
+                    line = candidate
+                    break
+
+        if line not in y_by_line:
+            pos[state] = (0.0, 0.0)
+            continue
+
+        y = y_by_line[line]
+        if state.startswith("s"):
+            pos[state] = (state_x["s"], y)
+        elif state.startswith("m"):
+            pos[state] = (state_x["m"], y)
+        elif state.startswith("vl"):
+            pos[state] = (state_x["vl"], y)
+        elif state.startswith("v"):
+            pos[state] = (state_x["v"], y)
+        else:
+            pos[state] = (state_x["p"], y)
+
+    return pos
+
+
+def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None:
+    stn_data = parse_stn_data(toml_file)
+    pos = build_stn_positions(stn_data)
+    products = stn_data["products"]
+    initial_inventory = stn_data["initial_inventory"]
+    product_ub = stn_data["product_ub"]
+
+    state_nodes = [state for state in stn_data["states"] if state != "dsch"]
+    task_nodes = stn_data["tasks"]
+
+    category_color = {
+        "Red": "#C94F4F",
+        "White": "#D9D9D9",
+        "Rose": "#F29BB2",
+    }
+
+    # Draw arcs first so nodes stay on top
+    for arc in stn_data["arcs"]:
+        # Avoid visual clutter: show each loss-to-dsch as a local upward arrow
+        # from the producing task instead of routing every arc to one shared dsch node.
+        if (
+            show_dsch
+            and arc["kind"] == "prod"
+            and arc["dst"] == "dsch"
+            and arc["src"] in task_nodes
+        ):
+            x_task, y_task = pos[arc["src"]]
+            y_top = y_task + 0.72
+            patch = mpatches.FancyArrowPatch(
+                (x_task, y_task + 0.03),
+                (x_task, y_top),
+                arrowstyle="-|>",
+                mutation_scale=9,
+                linewidth=1.5,
+                color="#C0392B",
+                linestyle="-",
+                alpha=0.9,
+                connectionstyle="arc3,rad=0.0",
+                zorder=1,
+            )
+            ax.add_patch(patch)
+            ax.text(
+                x_task,
+                y_top + 0.05,
+                f"dsch {format_arc_label(arc['coef'])}",
+                fontsize=7,
+                color="#C0392B",
+                ha="center",
+                va="bottom",
+                bbox={
+                    "boxstyle": "round,pad=0.15",
+                    "fc": "white",
+                    "ec": "none",
+                    "alpha": 0.8,
+                },
+                zorder=2,
+            )
+            continue
+
+        if (not show_dsch) and arc["dst"] == "dsch":
+            continue
+
+        x1, y1 = pos[arc["src"]]
+        x2, y2 = pos[arc["dst"]]
+        color = "#2A9D8F" if arc["kind"] == "prod" else "#555555"
+        linestyle = "-" if arc["kind"] == "prod" else "--"
+        patch = mpatches.FancyArrowPatch(
+            (x1, y1),
+            (x2, y2),
+            arrowstyle="-|>",
+            mutation_scale=9,
+            linewidth=1.5,
+            color=color,
+            linestyle=linestyle,
+            alpha=0.85,
+            connectionstyle="arc3,rad=0.08",
+            zorder=1,
+        )
+        ax.add_patch(patch)
+
+        label_x = (x1 + x2) / 2
+        label_y = (y1 + y2) / 2 + (0.08 if arc["kind"] == "prod" else -0.08)
+        ax.text(
+            label_x,
+            label_y,
+            format_arc_label(arc["coef"]),
+            fontsize=7,
+            color=color,
+            ha="center",
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.15",
+                "fc": "white",
+                "ec": "none",
+                "alpha": 0.8,
+            },
+            zorder=2,
+        )
+
+    # Draw state nodes
+    for state in state_nodes:
+        x, y = pos[state]
+        if state.startswith("s"):
+            marker = "o"
+            node_color = "#AED6F1"
+        elif state.startswith("m"):
+            marker = "o"
+            node_color = "#FAD7A0"
+        elif state.startswith(("v", "vl")):
+            marker = "o"
+            node_color = "#ABEBC6"
+        else:
+            marker = "s"
+            cat = products.get(state, {}).get("category", "")
+            node_color = category_color.get(cat, "#D5DBDB")
+
+        has_capacity_data = (state in initial_inventory) or (state in product_ub)
+        edge_color = "#1B4F72" if has_capacity_data else "#424949"
+        edge_width = 2.0 if has_capacity_data else 1.0
+
+        ax.scatter(
+            [x],
+            [y],
+            s=230,
+            marker=marker,
+            c=node_color,
+            edgecolors=edge_color,
+            linewidths=edge_width,
+            zorder=3,
+        )
+
+        label = state
+        if state in products:
+            name = products[state].get("name", state)
+            label = f"{state}\n{name}"
+
+        cap_parts = []
+        if state in initial_inventory:
+            cap_parts.append(f"Init={initial_inventory[state]:.0f}L")
+        if state in product_ub:
+            cap_parts.append(f"UB={product_ub[state]:.0f}L")
+        if cap_parts:
+            label = label + "\n" + " | ".join(cap_parts)
+
+        ax.text(x, y - 0.36, label, fontsize=7, ha="center", va="top", zorder=4)
+
+    # Draw task nodes
+    for task in task_nodes:
+        x, y = pos[task]
+        stage = task_stage(task)
+        ax.scatter(
+            [x],
+            [y],
+            s=200,
+            marker="^",
+            c=TASK_COLORS.get(stage, "#BBBBBB"),
+            edgecolors="#2D3436",
+            linewidths=1.0,
+            zorder=4,
+        )
+        ax.text(x, y + 0.24, task, fontsize=7, ha="center", va="bottom", zorder=5)
+
+    ax.set_title(
+        "State-Task Network (STN): States, Tasks, Material Flows, and Yield Fractions",
+        fontsize=11,
+    )
+    ax.set_xlim(-0.3, 7.3)
+    ax.set_ylim(-len(stn_data["lines_cfg"]) - 0.8, 2.1)
+    ax.axis("off")
+
+    legend_items = [
+        mpatches.Patch(facecolor="#AED6F1", edgecolor="#424949", label="Raw state (S)"),
+        mpatches.Patch(
+            facecolor="#ABEBC6", edgecolor="#424949", label="Intermediate state"
+        ),
+        mpatches.Patch(facecolor="#D5DBDB", edgecolor="#424949", label="Final state"),
+        mpatches.Patch(
+            facecolor="#FFFFFF",
+            edgecolor="#1B4F72",
+            label="Bold border: has Init/UB data",
+        ),
+        mpatches.Patch(
+            facecolor="#FFFFFF", edgecolor="#2A9D8F", label="Solid arc: production"
+        ),
+        mpatches.Patch(
+            facecolor="#FFFFFF", edgecolor="#555555", label="Dashed arc: consumption"
+        ),
+    ]
+    if show_dsch:
+        legend_items.append(
+            mpatches.Patch(
+                facecolor="#FFFFFF",
+                edgecolor="#C0392B",
+                label="Upward red arrow: loss to dsch",
+            )
+        )
+    ax.legend(handles=legend_items, loc="lower left", fontsize=7, framealpha=0.9)
 
 
 def plot_solution(data: dict, ax: plt.Axes) -> None:
@@ -229,7 +611,8 @@ def plot_solution(data: dict, ax: plt.Axes) -> None:
     xmax = makespan * 1.01
 
     for t in tasks:
-        prefix = re.match(r"[A-Za-z]+", t["task"]).group()
+        match = re.match(r"[A-Za-z]+", t["task"])
+        prefix = match.group() if match else ""
         color = TASK_COLORS.get(prefix, "#AAAAAA")
         duration = t["end"] - t["start"]
 
@@ -293,6 +676,7 @@ def plot_solution(data: dict, ax: plt.Axes) -> None:
     legend_handles = [
         mpatches.Patch(facecolor=c, label=label)
         for label, c in [
+            ("Pressing (Pr)", TASK_COLORS["Pr"]),
             ("Alcoholic fermentation (Fa)", TASK_COLORS["Fa"]),
             ("Lactic fermentation (Fl)", TASK_COLORS["Fl"]),
             ("Filtration (Fr)", TASK_COLORS["Fr"]),
@@ -317,8 +701,11 @@ def plot_solution(data: dict, ax: plt.Axes) -> None:
 
 
 # Production bar chart
-def plot_production(data: dict, ax: plt.Axes) -> None:
+def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
     production = data.get("production", [])
+    if not show_dsch:
+        production = [p for p in production if p.get("product", "").lower() != "dsch"]
+
     if not production:
         ax.text(
             0.5,
@@ -332,7 +719,19 @@ def plot_production(data: dict, ax: plt.Axes) -> None:
         ax.set_title("Final Production", fontsize=11)
         return
 
-    products = [p["product"] for p in production]
+    wine_metadata = data.get("wine_metadata", {})
+    products = []
+    for p in production:
+        product_key = p["product"]
+        meta = wine_metadata.get(product_key, {})
+        wine_name = p.get("name") or meta.get("name", "")
+        category = p.get("category") or meta.get("category", "")
+        if wine_name and category:
+            products.append(f"{wine_name}\n({category})")
+        elif wine_name:
+            products.append(wine_name)
+        else:
+            products.append(product_key)
     produced = [p["produced"] for p in production]
     demand = [p["demand"] for p in production]
     # outsourced = [p.get("outsourced", 0.0) for p in production]
@@ -415,6 +814,26 @@ def main():
         default=None,
         help="Output PNG filename (default: <input_file>_gantt.png)",
     )
+    parser.add_argument(
+        "--stn",
+        action="store_true",
+        help="Also generate a State-Task Network graph from TOML data.",
+    )
+    parser.add_argument(
+        "--toml",
+        default="parametersMS.toml",
+        help="Path to TOML file used to build the STN graph (default: parametersMS.toml)",
+    )
+    parser.add_argument(
+        "--stn-output",
+        default=None,
+        help="Output PNG filename for STN graph (default: <toml_file>_stn.png)",
+    )
+    parser.add_argument(
+        "--hide-dsch",
+        action="store_true",
+        help="Hide dsch from plots (production bar chart and STN dsch arrows).",
+    )
     args = parser.parse_args()
 
     filepath = Path(args.file)
@@ -443,7 +862,7 @@ def main():
 
     plot_solution(data, ax_gantt)
     if ax_prod is not None:
-        plot_production(data, ax_prod)
+        plot_production(data, ax_prod, show_dsch=not args.hide_dsch)
 
     if data.get("generated"):
         fig.text(
@@ -460,7 +879,21 @@ def main():
         out_path = args.output or filepath.stem + "_gantt.png"
         fig.savefig(out_path, dpi=800, bbox_inches="tight")
         print(f"Saved to {out_path}")
-    else:
+
+    if args.stn:
+        toml_path = Path(args.toml)
+        if not toml_path.exists():
+            print(f"Error: TOML file '{toml_path}' not found. STN graph skipped.")
+        else:
+            fig_stn = plt.figure(figsize=(18, 10), layout="constrained")
+            ax_stn = fig_stn.add_subplot(111)
+            plot_stn_graph(str(toml_path), ax_stn, show_dsch=not args.hide_dsch)
+            if args.no_show or args.stn_output:
+                stn_out = args.stn_output or toml_path.stem + "_stn.png"
+                fig_stn.savefig(stn_out, dpi=450, bbox_inches="tight")
+                print(f"Saved STN graph to {stn_out}")
+
+    if not (args.no_show or args.output or args.stn_output):
         plt.show()
 
 
