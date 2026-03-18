@@ -404,6 +404,17 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.JSTsinusar = pyo.Var(domain=pyo.NonNegativeReals)
     model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
 
+    # Global lower bound for makespan (longest line path)
+    min_makespan = max(
+        sum(
+            pyo.value(model.alpha[f"{step}{line}"])
+            for step in cfg["steps"]
+            if f"{step}{line}" in model.i
+        )
+        for line, cfg in lines_cfg.items()
+    )
+    model.ms_lb = pyo.Constraint(expr=model.MS >= min_makespan)
+
     ProdFinal_bounds = params["product_ub"]
     for sp in model.SP:
         if sp in ProdFinal_bounds:
