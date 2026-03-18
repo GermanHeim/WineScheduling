@@ -19,13 +19,20 @@ in tanks.
 # pyright: reportGeneralTypeIssues=false
 
 import pyomo.environ as pyo  # type: ignore
-from pyomo.opt import SolverFactory  # type: ignore
 import tomllib
+from pyomo.opt import SolverFactory  # type: ignore
+
 from utils import export_results
 
 
 def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     """Create and return the wine scheduling optimization model"""
+
+    def task_stage(task_name):
+        return "".join(ch for ch in task_name if ch.isalpha())
+
+    def task_line(task_name):
+        return "".join(ch for ch in task_name if ch.isdigit())
 
     # Load parameters from TOML file
     with open(toml_file, "rb") as f:
@@ -52,7 +59,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             raise ValueError(f"Line '{line_id}' missing 'steps' in [lines] section")
 
     # Validate templates
-    required_templates = ["Fa", "Fl", "Fr", "Alm"]
+    required_templates = {
+        step for line_cfg in params["lines"].values() for step in line_cfg["steps"]
+    }
     storage_templates = {"Alm"}
     for template in required_templates:
         if template not in params["templates"]:
@@ -74,8 +83,16 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Generate tasks from per-line step definitions
     lines_cfg = params["lines"]
     lines = list(lines_cfg.keys())
+    line_product = {}
     tasks = []
     for line, cfg in lines_cfg.items():
+        if "product" not in cfg:
+            raise ValueError(f"Line '{line}' missing 'product' in [lines] section")
+        if cfg["product"] not in params["products"]:
+            raise ValueError(
+                f"Line '{line}' references unknown product '{cfg['product']}'"
+            )
+        line_product[line] = cfg["product"]
         for step in cfg["steps"]:
             tasks.append(f"{step}{line}")
 
@@ -97,7 +114,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Fr")])
 
     # Non-pre-storage non-final tasks
-    model.inpst = pyo.Set(initialize=[t for t in tasks if t.startswith(("Fa", "Fl"))])
+    model.inpst = pyo.Set(
+        initialize=[t for t in tasks if t.startswith(("Pr", "Fa", "Fl"))]
+    )
 
     # Units
     model.j = pyo.Set(
@@ -113,6 +132,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             "subte12700",
             "iso10000",
             "iso5000",
+            "press",
         ]
     )
 
@@ -137,15 +157,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Task-unit pairs (ij)
     ij_data = []
     for task in tasks:
-        if task.startswith("Fa"):
-            prefix = "Fa"
-        elif task.startswith("Fl"):
-            prefix = "Fl"
-        elif task.startswith("Fr"):
-            prefix = "Fr"
-        elif task.startswith("Alm"):
-            prefix = "Alm"
-        else:
+        prefix = task_stage(task)
+        if prefix == "":
             continue
 
         if (
@@ -161,45 +174,53 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # States - built dynamically from line step definitions:
     #   s{l}: raw material
+    #   m{l}: liquid must after Pressing (only for pressed wines)
     #   v{l}: after Fa (zero-wait intermediate)
     #   vl{l}: after Fl (NIS intermediate, only when Fl is in steps)
-    #   p{l}: final product
+    #   product state: final product key declared on each line
     #   dsch: discard / discharge balance state
     states = ["dsch"]
     for line, cfg in lines_cfg.items():
         states.append(f"s{line}")
+        if "Pr" in cfg["steps"]:
+            states.append(f"m{line}")
         states.append(f"v{line}")
         if "Fl" in cfg["steps"]:
             states.append(f"vl{line}")
-        states.append(f"p{line}")
+        states.append(line_product[line])
     model.s = pyo.Set(initialize=states)
 
     # States produced by task
     IPS_data = []
     ICS_data = []
     for task in tasks:
-        if task.startswith("Alm"):
-            line = int(task[3:])
-        else:
-            line = int(task[2:])
-        if task.startswith("Fa"):
+        line = task_line(task)
+        stage = task_stage(task)
+        if stage == "Pr":
             ICS_data.append((task, f"s{line}"))
+            IPS_data.append((task, f"m{line}"))
+            IPS_data.append((task, "dsch"))
+        elif stage == "Fa":
+            if "Pr" in lines_cfg[line]["steps"]:
+                ICS_data.append((task, f"m{line}"))
+            else:
+                ICS_data.append((task, f"s{line}"))
             IPS_data.append((task, f"v{line}"))
             IPS_data.append((task, "dsch"))
-        elif task.startswith("Fl"):
+        elif stage == "Fl":
             ICS_data.append((task, f"v{line}"))
             IPS_data.append((task, f"vl{line}"))
             IPS_data.append((task, "dsch"))
-        elif task.startswith("Fr"):
+        elif stage == "Fr":
             # No-Fl lines: Fr consumes v{line} directly; others consume vl{line}
-            if str(line) in no_fl_lines:
+            if line in no_fl_lines:
                 ICS_data.append((task, f"v{line}"))
             else:
                 ICS_data.append((task, f"vl{line}"))
-            IPS_data.append((task, f"p{line}"))
-        elif task.startswith("Alm"):
-            ICS_data.append((task, f"p{line}"))
-            IPS_data.append((task, f"p{line}"))
+            IPS_data.append((task, line_product[line]))
+        elif stage == "Alm":
+            ICS_data.append((task, line_product[line]))
+            IPS_data.append((task, line_product[line]))
     model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
 
     # States consumed by task
@@ -209,42 +230,49 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.SR = pyo.Set(initialize=[f"s{l}" for l in lines])
 
     # Final product states
-    model.SP = pyo.Set(initialize=["dsch"] + [f"p{l}" for l in lines])
+    model.SP = pyo.Set(initialize=["dsch"] + [line_product[l] for l in lines])
 
     # Intermediate states
     model.SI = model.s - model.SP - model.SR  # type: ignore
 
     # Final states that can be stored in ecobulk (derived from ecobulk flag in TOML)
-    model.SFISEco = pyo.Set(initialize=[f"p{l}" for l in eco_lines])
+    model.SFISEco = pyo.Set(initialize=[line_product[l] for l in eco_lines])
 
     # Final states stored only in barrels (no ecobulk, no long-term storage)
     model.SFISBar = pyo.Set(
-        initialize=[f"p{l}" for l in lines if l not in eco_lines and l not in ist_lines]
+        initialize=[
+            line_product[l] for l in lines if l not in eco_lines and l not in ist_lines
+        ]
     )
 
-    # Zero wait states (after Fa, before Fl or Fr for no-Fl lines)
-    model.SZW = pyo.Set(initialize=[f"v{l}" for l in lines])
+    # Zero wait states (after Pr and Fa)
+    model.SZW = pyo.Set(
+        initialize=[f"v{l}" for l in lines]
+        + [f"m{l}" for l in lines if "Pr" in lines_cfg[l]["steps"]]
+    )
 
     # No intermediate storage states (after Fl, before Fr)
     model.SNIS = pyo.Set(initialize=[f"vl{l}" for l in lines if l not in no_fl_lines])
 
-    # One-to-one task pairs
+    # One-to-one task pairs derived from step order
     tc1_data = []
+    tc2_data = []
     for line in lines:
-        if line in no_fl_lines:
-            # No lactic fermentation: Fa feeds Fr directly
-            tc1_data.append((f"Fa{line}", f"Fr{line}"))
-        else:
-            tc1_data.append((f"Fa{line}", f"Fl{line}"))
-            tc1_data.append((f"Fl{line}", f"Fr{line}"))
+        steps = lines_cfg[line]["steps"]
+        for idx in range(len(steps) - 1):
+            current_task = f"{steps[idx]}{line}"
+            next_task = f"{steps[idx + 1]}{line}"
+            if steps[idx + 1] == "Alm":
+                tc2_data.append((current_task, next_task))
+            else:
+                tc1_data.append((current_task, next_task))
     model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
 
     # One-to-one storage pairs
-    tc2_data = [(f"Fr{l}", f"Alm{l}") for l in ist_lines]
     model.tc2 = pyo.Set(initialize=tc2_data, dimen=2)
 
     # Products
-    model.prd = pyo.Set(initialize=[f"Vino{l}" for l in lines])
+    model.prd = pyo.Set(initialize=[line_product[l] for l in lines])
 
     # ========================================
     # PARAMETERS
@@ -276,15 +304,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Load alpha, beta, Bmin, Bmax from templates
     for task in model.i:  # type: ignore
         if task is not None:
-            if task.startswith("Fa"):
-                prefix = "Fa"
-            elif task.startswith("Fl"):
-                prefix = "Fl"
-            elif task.startswith("Fr"):
-                prefix = "Fr"
-            elif task.startswith("Alm"):
-                prefix = "Alm"
-            else:
+            prefix = task_stage(task)
+            if prefix == "":
                 continue
 
         if prefix in params["templates"]:
@@ -339,6 +360,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Demand
     demand_data = {k: v["demand"] for k, v in params["products"].items()}
     model.D = pyo.Param(model.s, initialize=demand_data, default=0)
+    model.line_product = line_product
+    model.product_meta = params["products"]
 
     # Penalties
     # Penalty imposed for leaving tanks empty
