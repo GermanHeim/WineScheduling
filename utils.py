@@ -3,6 +3,7 @@ Utility functions for Wine Scheduling Optimization models.
 """
 
 from datetime import datetime
+
 import pyomo.environ as pyo  # type: ignore
 
 
@@ -39,6 +40,13 @@ def export_results(model, model_name, filename=None):
         filename = f"{safe_name}_results.txt"
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line_product = getattr(model, "line_product", {})
+    product_meta = getattr(model, "product_meta", {})
+
+    def split_task(task_name):
+        stage = "".join(ch for ch in task_name if ch.isalpha())
+        line = "".join(ch for ch in task_name if ch.isdigit())
+        return stage, line
 
     # Collect task schedule data
     def task_active(model, i, n):
@@ -64,9 +72,14 @@ def export_results(model, model_name, filename=None):
                                 "batch": pyo.value(model.bj[i, j, n]),
                             }
                         )
+                stage, line = split_task(i)
+                product_key = line_product.get(line)
                 task_schedule.append(
                     {
                         "task": i,
+                        "stage": stage,
+                        "line": line,
+                        "product": product_key,
                         "event": n,
                         "start": start,
                         "end": end,
@@ -136,6 +149,10 @@ def export_results(model, model_name, filename=None):
             demand = pyo.value(model.D[s])
             if demand > 0 or prod > 0.01:
                 line = f"{s}: {prod:.2f} L (Demand: {demand:.2f} L)"
+                if s in product_meta:
+                    category = product_meta[s].get("category", "Unknown")
+                    wine_name = product_meta[s].get("name", s)
+                    line += f" [{wine_name} | {category}]"
                 if hasattr(model, "OutsourcedQty"):
                     outsourced = pyo.value(model.OutsourcedQty[s])
                     if outsourced > 0.01:
@@ -175,6 +192,18 @@ def export_results(model, model_name, filename=None):
                 f"{entry['batch']:.4f},"
                 f"{units_str}\n"
             )
+
+        # Wine metadata
+        if line_product:
+            f.write(f"\n{sep}\n")
+            f.write("WINE METADATA (line,product,name,category):\n")
+            f.write(f"{'-' * 80}\n")
+            for line in sorted(line_product.keys(), key=lambda x: int(x)):
+                product_key = line_product[line]
+                meta = product_meta.get(product_key, {})
+                product_name = str(meta.get("name", product_key)).replace(",", " ")
+                category = str(meta.get("category", "Unknown")).replace(",", " ")
+                f.write(f"{line},{product_key},{product_name},{category}\n")
 
     print(f"Results exported to {filename}")
     return task_schedule
