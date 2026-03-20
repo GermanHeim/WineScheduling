@@ -337,7 +337,7 @@ Duration in the active disjunct differs by task type:
 
 $$\text{Non-storage } (i \in I^{nst}): \quad Tf_{i,n} = Ts_{i,n} + \alpha_i + \beta_i b_{i,n}$$
 
-Storage tasks do not have a fixed processing duration, once activated they occupy the vessel until the planning horizon ends. Applying the non-storage duration equality $Tf = Ts + \alpha$ to storage tasks (where $\alpha \ll H$) would force $Ts \ge H - \alpha$, making solutions where storage starts early infeasible inside the hull relaxation. The equality $Tf = H$ is the disjunctive counterpart of the global constraint A08 ($Tf_{i,n} \ge H \cdot W_{i,n}$).
+Storage tasks do not use a fixed duration equation in the active disjunct. Their behavior is modeled by persistence implications ($W_{i,n} \implies W_{i,n+1}$) together with a terminal consistency condition embedded directly in the final active disjunct: if a storage task is active at the final event, then $Tf_{i,N} = MS$. This prevents a storage task that first activates at $N$ from taking zero duration while avoiding global Big-M coupling for this logic.
 
 ### 2. Global Precedence Logic (Eq. 2.2)
 
@@ -389,5 +389,5 @@ $$ \sum_{j} y_{i,j,n} \le jMax \cdot W_{i,n} $$
 
 ### 5. Variable Definitions (GDP Adaptations)
 
-- **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and all algebraic constraints (A01, A06, A08, precedence, etc.).
+- **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and algebraic constraints (A01, A06, precedence, persistence, etc.), and activates terminal storage horizon sync inside the final storage disjunct.
 - **$y_{i,j,n}$:** Unit assignment binary; retained for global constraints (A03, batch limits).
