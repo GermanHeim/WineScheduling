@@ -164,15 +164,23 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.n = pyo.Set(initialize=list(range(1, params["global"]["n_max"] + 1)))
 
     # States - built dynamically from line step definitions:
-    #   s{l}: raw material
+    #   s_red / s_white_rose: shared raw-material pools by product category
     #   m{l}: liquid must after Pressing (only for pressed wines)
     #   v{l}: after Fa (zero-wait intermediate)
     #   vl{l}: after Fl (NIS intermediate, only when Fl is in steps)
     #   product state: final product key declared on each line
     #   dsch: discard / discharge balance state
+    line_raw_state = {}
+    raw_states = set()
     states = ["dsch"]
     for line, cfg in lines_cfg.items():
-        states.append(f"s{line}")
+        product_key = line_product[line]
+        category = params["products"][product_key].get("category", "").strip().lower()
+        raw_state = "s_red" if category == "red" else "s_white_rose"
+        line_raw_state[line] = raw_state
+        raw_states.add(raw_state)
+        if raw_state not in states:
+            states.append(raw_state)
         if "Pr" in cfg["steps"]:
             states.append(f"m{line}")
         states.append(f"v{line}")
@@ -188,14 +196,14 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         line = task_line(task)
         stage = task_stage(task)
         if stage == "Pr":
-            ICS_data.append((task, f"s{line}"))
+            ICS_data.append((task, line_raw_state[line]))
             IPS_data.append((task, f"m{line}"))
             IPS_data.append((task, "dsch"))
         elif stage == "Fa":
             if "Pr" in lines_cfg[line]["steps"]:
                 ICS_data.append((task, f"m{line}"))
             else:
-                ICS_data.append((task, f"s{line}"))
+                ICS_data.append((task, line_raw_state[line]))
             IPS_data.append((task, f"v{line}"))
             IPS_data.append((task, "dsch"))
         elif stage == "Fl":
@@ -215,7 +223,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
     model.ICS = pyo.Set(initialize=ICS_data, dimen=2)
 
-    model.SR = pyo.Set(initialize=[f"s{l}" for l in lines])
+    model.SR = pyo.Set(initialize=sorted(raw_states))
+    model.line_raw_state = line_raw_state
     model.SP = pyo.Set(initialize=["dsch"] + [line_product[l] for l in lines])
     model.SI = model.s - model.SP - model.SR
     model.SFISEco = pyo.Set(initialize=[line_product[l] for l in eco_lines])

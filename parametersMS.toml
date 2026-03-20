@@ -8,7 +8,7 @@
     H = 3600  # 150 days
 
     # Number of event points
-    n_max = 14
+    n_max = 9
 
     # Activation/unit assignment limits
     iMax = 1
@@ -92,17 +92,8 @@
 #
 # 'ST0': Initial Stock at Time = 0
 [initial_inventory]
-    s1 = 100000
-    s2 = 9137
-    s3 = 400000
-    s4 = 400000
-    s5 = 600000
-    s6 = 150000
-    s7 = 70000
-    s8 = 90000
-    s9 = 80000
-    s10 = 85000
-    s11 = 85000
+    s_red = 655000
+    s_white_rose = 1414137
 
 # 4. Upper Bounds for the Model
 #
@@ -253,7 +244,7 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
 # These define how much of each state is consumed/produced per unit batch size
 # for each task type.
 [rho.Fa1]
-    rhoIScons = {s1 = -1.0}
+    rhoIScons = {s_red = -1.0}
     rhoISprod = {v1 = 0.7}
 
 [rho.Fa2]
@@ -265,7 +256,7 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
     rhoISprod = {v3 = 1.0}
 
 [rho.Fa4]
-    rhoIScons = {s4 = -1.0}
+    rhoIScons = {s_red = -1.0}
     rhoISprod = {v4 = 0.7}
 
 [rho.Fa5]
@@ -277,7 +268,7 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
     rhoISprod = {v6 = 1.0}
 
 [rho.Fa7]
-    rhoIScons = {s7 = -1.0}
+    rhoIScons = {s_red = -1.0}
     rhoISprod = {v7 = 0.7}
 
 [rho.Fa8]
@@ -289,7 +280,7 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
     rhoISprod = {v9 = 1.0}
 
 [rho.Fa10]
-    rhoIScons = {s10 = -1.0}
+    rhoIScons = {s_red = -1.0}
     rhoISprod = {v10 = 0.7}
 
 [rho.Fa11]
@@ -297,31 +288,31 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
     rhoISprod = {v11 = 1.0}
 
 [rho.Pr2]
-    rhoIScons = {s2 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m2 = 0.7, dsch = 0.3}
 
 [rho.Pr3]
-    rhoIScons = {s3 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m3 = 0.7, dsch = 0.3}
 
 [rho.Pr5]
-    rhoIScons = {s5 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m5 = 0.7, dsch = 0.3}
 
 [rho.Pr6]
-    rhoIScons = {s6 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m6 = 0.7, dsch = 0.3}
 
 [rho.Pr8]
-    rhoIScons = {s8 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m8 = 0.7, dsch = 0.3}
 
 [rho.Pr9]
-    rhoIScons = {s9 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m9 = 0.7, dsch = 0.3}
 
 [rho.Pr11]
-    rhoIScons = {s11 = -1.0}
+    rhoIScons = {s_white_rose = -1.0}
     rhoISprod = {m11 = 0.7, dsch = 0.3}
 
 [rho.Fl1]
