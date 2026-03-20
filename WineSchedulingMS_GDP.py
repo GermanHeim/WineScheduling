@@ -409,7 +409,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
     model.ProdFinal = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.FueraDeposito = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
-    model.MS = pyo.Var(domain=pyo.NonNegativeReals)
+    model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
     model.JSTsinusar = pyo.Var(domain=pyo.NonNegativeReals)
     model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
 
@@ -733,6 +733,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
                     model.Tf[i, n]
                     == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
                 )
+
+            # Terminal storage event: if active at n_max, enforce Tf == MS locally.
+            if i in model.ist and n == n_max:
+                add_constr(d_active, "horizon_sync_lb", model.Tf[i, n_max] >= model.MS)
+                add_constr(d_active, "horizon_sync_ub", model.Tf[i, n_max] <= model.MS)
 
             # Nested unit selection: ⋁_{j in J_i}
             for j in compatible_units:
