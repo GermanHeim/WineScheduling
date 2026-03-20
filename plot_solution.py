@@ -232,6 +232,34 @@ def parse_production(text: str) -> list[dict]:
     return production
 
 
+def infer_toml_path(results_path: Path, model_name: str) -> Path:
+    """Infer which TOML file should be used for STN plotting."""
+    model_l = (model_name or "").lower()
+    file_l = results_path.name.lower()
+
+    if "economic" in model_l or "economic" in file_l:
+        preferred = Path("parameters.toml")
+        if preferred.exists():
+            return preferred
+
+    if "ms" in model_l or "ms" in file_l:
+        preferred = Path("parametersMS.toml")
+        if preferred.exists():
+            return preferred
+
+    # Historical default for the non-economic model.
+    default_ms = Path("parametersMS.toml")
+    if default_ms.exists():
+        return default_ms
+
+    fallback = Path("parameters.toml")
+    if fallback.exists():
+        return fallback
+
+    # Final fallback keeps previous behavior when files are missing.
+    return default_ms
+
+
 def task_stage(task_name: str) -> str:
     return "".join(ch for ch in task_name if ch.isalpha())
 
@@ -259,13 +287,16 @@ def parse_stn_data(toml_file: str) -> dict:
 
     states: set[str] = {"dsch"}
     for line, cfg in lines_cfg.items():
-        states.add(f"s{line}")
         if "Pr" in cfg["steps"]:
             states.add(f"m{line}")
         states.add(f"v{line}")
         if "Fl" in cfg["steps"]:
             states.add(f"vl{line}")
         states.add(cfg["product"])
+
+    # Include any explicitly declared inventory states. This is important when
+    # raw materials are shared pools (e.g. s_red, s_white_rose) instead of s1..sN.
+    states.update(initial_inventory.keys())
 
     arcs = []
     for task in tasks:
@@ -316,6 +347,7 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
     tasks = stn_data["tasks"]
     states = stn_data["states"]
     line_product = stn_data["line_product"]
+    arcs = stn_data["arcs"]
 
     sorted_lines = sorted(lines_cfg.keys(), key=lambda x: int(x))
     y_by_line = {line: -idx for idx, line in enumerate(sorted_lines)}
@@ -345,27 +377,43 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
         stage = task_stage(task)
         pos[task] = (stage_x.get(stage, 3.0), y_by_line[line])
 
+    task_line_map = {task: task_line(task) for task in tasks}
+
+    def state_connected_lines(state: str) -> list[str]:
+        connected: list[str] = []
+        for arc in arcs:
+            if arc["src"] == state and arc["dst"] in task_line_map:
+                connected.append(task_line_map[arc["dst"]])
+            elif arc["dst"] == state and arc["src"] in task_line_map:
+                connected.append(task_line_map[arc["src"]])
+        return [line for line in connected if line in y_by_line]
+
     for state in states:
         if state == "dsch":
             pos[state] = (6.8, 1.2)
             continue
 
-        line = ""
-        if state.startswith(("s", "m", "v")) and state != "vl":
-            line = "".join(ch for ch in state if ch.isdigit())
-        elif state.startswith("vl"):
-            line = state[2:]
+        y_values: list[float] = []
+
+        # Prefer explicit product-to-line mapping for final product states.
+        product_line = ""
+        for candidate, product in line_product.items():
+            if product == state:
+                product_line = candidate
+                break
+        if product_line in y_by_line:
+            y_values.append(y_by_line[product_line])
+
+        # Add connected task lines so shared states (e.g. s_red) are centered
+        # across all relevant lines instead of forced to a single line index.
+        for line in state_connected_lines(state):
+            y_values.append(y_by_line[line])
+
+        if y_values:
+            y = sum(y_values) / len(y_values)
         else:
-            for candidate, product in line_product.items():
-                if product == state:
-                    line = candidate
-                    break
+            y = 0.0
 
-        if line not in y_by_line:
-            pos[state] = (0.0, 0.0)
-            continue
-
-        y = y_by_line[line]
         if state.startswith("s"):
             pos[state] = (state_x["s"], y)
         elif state.startswith("m"):
@@ -821,8 +869,11 @@ def main():
     )
     parser.add_argument(
         "--toml",
-        default="parametersMS.toml",
-        help="Path to TOML file used to build the STN graph (default: parametersMS.toml)",
+        default=None,
+        help=(
+            "Path to TOML file used to build the STN graph "
+            "(default: auto from results/model name)"
+        ),
     )
     parser.add_argument(
         "--stn-output",
@@ -881,7 +932,13 @@ def main():
         print(f"Saved to {out_path}")
 
     if args.stn:
-        toml_path = Path(args.toml)
+        toml_path = (
+            Path(args.toml)
+            if args.toml
+            else infer_toml_path(filepath, str(data.get("model_name", "")))
+        )
+        if not args.toml:
+            print(f"Auto-selected STN TOML: {toml_path}")
         if not toml_path.exists():
             print(f"Error: TOML file '{toml_path}' not found. STN graph skipped.")
         else:
