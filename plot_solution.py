@@ -20,6 +20,7 @@ from pathlib import Path
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from matplotlib.ticker import MultipleLocator
 
 TASK_COLORS: dict[str, str] = {
@@ -92,6 +93,10 @@ def parse_results(filepath: str) -> dict:
 def parse_metadata(text: str) -> dict:
     meta: dict[str, object] = {}
 
+    def parse_metric(pattern: str) -> float | None:
+        m = re.search(pattern, text)
+        return float(m.group(1).replace(",", "")) if m else None
+
     lines = text.splitlines()
     for i, line in enumerate(lines):
         if line.startswith("=") and i + 1 < len(lines):
@@ -106,8 +111,10 @@ def parse_metadata(text: str) -> dict:
     obj = re.search(r"(?:Objective Value|Total Profit)\s*[:$\s]*([\d.,]+)", text)
     meta["objective"] = float(obj.group(1).replace(",", "")) if obj else None
 
-    rev = re.search(r"Revenue\s*[:$\s]*([\d.,]+)", text)
-    meta["revenue"] = float(rev.group(1).replace(",", "")) if rev else None
+    meta["revenue"] = parse_metric(r"Revenue\s*[:$\s]*([\d.,]+)")
+    meta["outsourcing_cost"] = parse_metric(r"Outsourcing Cost\s*[:$\s]*([\d.,]+)")
+    meta["raw_material_cost"] = parse_metric(r"Raw Material Cost\s*[:$\s]*([\d.,]+)")
+    meta["lateness_cost"] = parse_metric(r"Lateness Cost\s*[:$\s]*([\d.,]+)")
 
     ms = re.search(r"Makespan:\s*([\d.]+)\s*hours", text)
     meta["makespan"] = float(ms.group(1)) if ms else None
@@ -199,21 +206,26 @@ def parse_task_schedule(text: str) -> list[dict]:
 
 def parse_production(text: str) -> list[dict]:
     production = []
-    for m in re.finditer(
-        r"([A-Za-z0-9_]+):\s*([\d.]+)\s*L\s*\(Demand:\s*([\d.]+)\s*L\)(?:\s*\[(.*?)\])?",
-        text,
-    ):
+    line_pattern = re.compile(
+        r"^([A-Za-z0-9_]+):\s*([\d.]+)\s*L\s*\(Demand:\s*([\d.]+)\s*L\)"
+        r"(?:\s*\[(.*?)\])?(?:,\s*Outsourced:\s*([\d.]+)\s*L)?\s*$"
+    )
+    for line in text.splitlines():
+        m = line_pattern.match(line.strip())
+        if not m:
+            continue
         wine_name = ""
         category = ""
         if m.group(4):
             parts = [part.strip() for part in m.group(4).split("|", 1)]
             if len(parts) == 2:
                 wine_name, category = parts
+        outsourced = float(m.group(5)) if m.group(5) else 0.0
         production.append(
             {
                 "product": m.group(1),
                 "produced": float(m.group(2)),
-                "outsourced": 0.0,
+                "outsourced": outsourced,
                 "demand": float(m.group(3)),
                 "name": wine_name,
                 "category": category,
@@ -232,7 +244,7 @@ def parse_production(text: str) -> list[dict]:
         product = m.group(1)
         outsourced_by_product[product] = float(m.group(3))
 
-    if production:
+    if production and outsourced_by_product:
         for item in production:
             item["outsourced"] = outsourced_by_product.get(item["product"], 0.0)
     else:
@@ -664,7 +676,9 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
     ax.legend(handles=legend_items, loc="lower left", fontsize=7, framealpha=0.9)
 
 
-def plot_solution(data: dict, ax: plt.Axes, deadline_hours: float | None = None) -> None:
+def plot_solution(
+    data: dict, ax: plt.Axes, deadline_hours: float | None = None
+) -> None:
     tasks = data["tasks"]
     if not tasks:
         ax.text(
@@ -766,17 +780,6 @@ def plot_solution(data: dict, ax: plt.Axes, deadline_hours: float | None = None)
             linewidth=1.4,
             alpha=0.9,
         )
-        ax.text(
-            deadline_hours,
-            0.98,
-            f"Deadline ({deadline_hours:.0f} h)",
-            transform=ax.get_xaxis_transform(),
-            ha="right",
-            va="top",
-            fontsize=8,
-            color="#B03A2E",
-            backgroundcolor="white",
-        )
 
     legend_handles = [
         mpatches.Patch(facecolor=c, label=label)
@@ -789,6 +792,17 @@ def plot_solution(data: dict, ax: plt.Axes, deadline_hours: float | None = None)
         ]
         if any(t["task"].startswith(label.split("(")[1].rstrip(")")) for t in tasks)
     ]
+    if deadline_hours is not None and deadline_hours >= 0:
+        legend_handles.append(
+            Line2D(
+                [0],
+                [0],
+                color="#B03A2E",
+                linestyle="--",
+                linewidth=1.4,
+                label=f"Deadline ({deadline_hours:.0f} h)",
+            )
+        )
     ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
 
     title_parts = []
@@ -802,6 +816,17 @@ def plot_solution(data: dict, ax: plt.Axes, deadline_hours: float | None = None)
         title_parts.append(f"Obj: {data['objective']:.2f}")
     if data.get("revenue") is not None:
         title_parts.append(f"Revenue: {data['revenue']:.2f}")
+    model_name_l = str(data.get("model_name", "")).lower()
+    if "economic" in model_name_l:
+        econ_parts = []
+        if data.get("outsourcing_cost") is not None:
+            econ_parts.append(f"Outsource Cost: {data['outsourcing_cost']:.2f}")
+        if data.get("raw_material_cost") is not None:
+            econ_parts.append(f"Raw Mat Cost: {data['raw_material_cost']:.2f}")
+        if data.get("lateness_cost") is not None:
+            econ_parts.append(f"Lateness Cost: {data['lateness_cost']:.2f}")
+        if econ_parts:
+            title_parts.append("; ".join(econ_parts))
     if data.get("unused_units") is not None:
         title_parts.append(f"Unused tanks: {data['unused_units']}")
     ax.set_title("  |  ".join(title_parts), fontsize=10, pad=18)
@@ -842,28 +867,28 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
     produced = [p["produced"] for p in production]
     demand = [p["demand"] for p in production]
     outsourced = [p.get("outsourced", 0.0) for p in production]
-    show_bought = any(v > 1e-9 for v in outsourced)
+    show_outsourced = any(v > 1e-9 for v in outsourced)
 
     x = range(len(products))
-    if show_bought:
+    if show_outsourced:
         width = 0.16
         gap = 0.02
         delta = width + gap
-        bars_prod = ax.bar(
+        ax.bar(
             [xi - delta for xi in x],
+            outsourced,
+            width,
+            label="Outsourced",
+            color="#E07B54",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        bars_prod = ax.bar(
+            [xi for xi in x],
             produced,
             width,
             label="Produced",
             color="#5B8DB8",
-            edgecolor="white",
-            linewidth=0.6,
-        )
-        ax.bar(
-            [xi for xi in x],
-            outsourced,
-            width,
-            label="Bought",
-            color="#E07B54",
             edgecolor="white",
             linewidth=0.6,
         )
@@ -902,8 +927,8 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
     ax.set_xticks(list(x))
     ax.set_xticklabels(products, fontsize=9)
     ax.set_ylabel("Volume (L)", fontsize=10)
-    if show_bought:
-        ax.set_title("Final Production vs. Bought vs. Demand", fontsize=10)
+    if show_outsourced:
+        ax.set_title("Final Production vs. Outsourced vs. Demand", fontsize=10)
     else:
         ax.set_title("Final Production vs. Demand", fontsize=10)
     ax.legend(fontsize=8, framealpha=0.85)
@@ -1001,7 +1026,7 @@ def main():
             print(f"  Deadline : {deadline_hours} h")
 
     fig = plt.figure(figsize=(16, 10), layout="constrained")
-    fig.get_layout_engine().set(rect=(0, 0.025, 1, 1))
+    fig.get_layout_engine().set(rect=(0.0, 0.025, 1.0, 1.0))
     has_production = bool(data.get("production"))
     if has_production:
         gs = fig.add_gridspec(2, 1, height_ratios=[3, 1])
