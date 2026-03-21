@@ -105,6 +105,16 @@ def export_results(model, model_name, filename=None):
         obj_val = pyo.value(model.OBJ)
         f.write(f"Objective Value: {obj_val:.4f}\n")
 
+        # Economic KPI components (when available)
+        if hasattr(model, "Revenue"):
+            f.write(f"Revenue: {pyo.value(model.Revenue):.4f}\n")
+        if hasattr(model, "OutsourcingCost"):
+            f.write(f"Outsourcing Cost: {pyo.value(model.OutsourcingCost):.4f}\n")
+        if hasattr(model, "RawMaterialCost"):
+            f.write(f"Raw Material Cost: {pyo.value(model.RawMaterialCost):.4f}\n")
+        if hasattr(model, "LatenessCost"):
+            f.write(f"Lateness Cost: {pyo.value(model.LatenessCost):.4f}\n")
+
         # Makespan
         ms = pyo.value(model.MS)
         f.write(f"Makespan: {ms:.2f} hours ({ms / 24:.2f} days)\n")
@@ -144,6 +154,12 @@ def export_results(model, model_name, filename=None):
         f.write(f"\n{sep}\n")
         f.write("FINAL PRODUCTION:\n")
         f.write(f"{'-' * 80}\n")
+        outsource_var = None
+        if hasattr(model, "Outsource"):
+            outsource_var = model.Outsource
+        elif hasattr(model, "OutsourcedQty"):
+            outsource_var = model.OutsourcedQty
+
         for s in model.SP:
             prod = pyo.value(model.ProdFinal[s])
             demand = pyo.value(model.D[s])
@@ -153,8 +169,11 @@ def export_results(model, model_name, filename=None):
                     category = product_meta[s].get("category", "Unknown")
                     wine_name = product_meta[s].get("name", s)
                     line += f" [{wine_name} | {category}]"
-                if hasattr(model, "OutsourcedQty"):
-                    outsourced = pyo.value(model.OutsourcedQty[s])
+                if outsource_var is not None:
+                    try:
+                        outsourced = pyo.value(outsource_var[s])
+                    except (KeyError, ValueError):
+                        outsourced = 0.0
                     if outsourced > 0.01:
                         line += f", Outsourced: {outsourced:.2f} L"
                 f.write(line + "\n")
