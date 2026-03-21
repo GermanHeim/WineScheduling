@@ -106,6 +106,9 @@ def parse_metadata(text: str) -> dict:
     obj = re.search(r"(?:Objective Value|Total Profit)\s*[:$\s]*([\d.,]+)", text)
     meta["objective"] = float(obj.group(1).replace(",", "")) if obj else None
 
+    rev = re.search(r"Revenue\s*[:$\s]*([\d.,]+)", text)
+    meta["revenue"] = float(rev.group(1).replace(",", "")) if rev else None
+
     ms = re.search(r"Makespan:\s*([\d.]+)\s*hours", text)
     meta["makespan"] = float(ms.group(1)) if ms else None
 
@@ -210,25 +213,39 @@ def parse_production(text: str) -> list[dict]:
             {
                 "product": m.group(1),
                 "produced": float(m.group(2)),
+                "outsourced": 0.0,
                 "demand": float(m.group(3)),
                 "name": wine_name,
                 "category": category,
-                # "outsourced": 0.0,
             }
         )
-    if not production:
-        for m in re.finditer(
+
+    outsourced_by_product: dict[str, float] = {}
+    produced_out_demand_matches = list(
+        re.finditer(
             r"([A-Za-z0-9_]+):\s*Produced=([\d.]+)L,\s*Outsourced=([\d.]+)L,\s*Demand=([\d.]+)L",
             text,
-        ):
+        )
+    )
+
+    for m in produced_out_demand_matches:
+        product = m.group(1)
+        outsourced_by_product[product] = float(m.group(3))
+
+    if production:
+        for item in production:
+            item["outsourced"] = outsourced_by_product.get(item["product"], 0.0)
+    else:
+        for m in produced_out_demand_matches:
             production.append(
                 {
                     "product": m.group(1),
                     "produced": float(m.group(2)),
-                    # "outsourced": float(m.group(3)),
+                    "outsourced": float(m.group(3)),
                     "demand": float(m.group(4)),
                 }
             )
+
     return production
 
 
@@ -258,6 +275,26 @@ def infer_toml_path(results_path: Path, model_name: str) -> Path:
 
     # Final fallback keeps previous behavior when files are missing.
     return default_ms
+
+
+def is_economic_context(results_path: Path, model_name: str) -> bool:
+    model_l = (model_name or "").lower()
+    file_l = results_path.name.lower()
+    return "economic" in model_l or "economic" in file_l
+
+
+def read_deadline_hours(toml_path: Path) -> float | None:
+    if not toml_path.exists():
+        return None
+    with open(toml_path, "rb") as f:
+        params = tomllib.load(f)
+    deadline = params.get("global", {}).get("deadline")
+    if deadline is None:
+        return None
+    try:
+        return float(deadline)
+    except (TypeError, ValueError):
+        return None
 
 
 def task_stage(task_name: str) -> str:
@@ -627,7 +664,7 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
     ax.legend(handles=legend_items, loc="lower left", fontsize=7, framealpha=0.9)
 
 
-def plot_solution(data: dict, ax: plt.Axes) -> None:
+def plot_solution(data: dict, ax: plt.Axes, deadline_hours: float | None = None) -> None:
     tasks = data["tasks"]
     if not tasks:
         ax.text(
@@ -721,6 +758,26 @@ def plot_solution(data: dict, ax: plt.Axes) -> None:
     ax.grid(axis="x", which="minor", linestyle=":", linewidth=0.4, alpha=0.5)
     ax.grid(axis="x", which="major", linestyle="--", linewidth=0.6, alpha=0.5)
 
+    if deadline_hours is not None and deadline_hours >= 0:
+        ax.axvline(
+            deadline_hours,
+            color="#B03A2E",
+            linestyle="--",
+            linewidth=1.4,
+            alpha=0.9,
+        )
+        ax.text(
+            deadline_hours,
+            0.98,
+            f"Deadline ({deadline_hours:.0f} h)",
+            transform=ax.get_xaxis_transform(),
+            ha="right",
+            va="top",
+            fontsize=8,
+            color="#B03A2E",
+            backgroundcolor="white",
+        )
+
     legend_handles = [
         mpatches.Patch(facecolor=c, label=label)
         for label, c in [
@@ -743,6 +800,8 @@ def plot_solution(data: dict, ax: plt.Axes) -> None:
         )
     if data.get("objective") is not None:
         title_parts.append(f"Obj: {data['objective']:.2f}")
+    if data.get("revenue") is not None:
+        title_parts.append(f"Revenue: {data['revenue']:.2f}")
     if data.get("unused_units") is not None:
         title_parts.append(f"Unused tanks: {data['unused_units']}")
     ax.set_title("  |  ".join(title_parts), fontsize=10, pad=18)
@@ -782,51 +841,77 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
             products.append(product_key)
     produced = [p["produced"] for p in production]
     demand = [p["demand"] for p in production]
-    # outsourced = [p.get("outsourced", 0.0) for p in production]
+    outsourced = [p.get("outsourced", 0.0) for p in production]
+    show_bought = any(v > 1e-9 for v in outsourced)
 
     x = range(len(products))
-    width = 0.18
-    gap = 0.02
-    offset = width / 2 + gap / 2
-
-    bars_prod = ax.bar(
-        [xi - offset for xi in x],
-        produced,
-        width,
-        label="Produced",
-        color="#5B8DB8",
-        edgecolor="white",
-        linewidth=0.6,
-    )
-    # bars_out = ax.bar(
-    #     [xi for xi in x],
-    #     outsourced,
-    #     width,
-    #     label="Outsourced",
-    #     color="#E07B54",
-    #     edgecolor="white",
-    #     linewidth=0.6,
-    # )
-    ax.bar(
-        [xi + offset for xi in x],
-        demand,
-        width,
-        label="Demand",
-        color="#AAAAAA",
-        edgecolor="white",
-        linewidth=0.6,
-    )
+    if show_bought:
+        width = 0.16
+        gap = 0.02
+        delta = width + gap
+        bars_prod = ax.bar(
+            [xi - delta for xi in x],
+            produced,
+            width,
+            label="Produced",
+            color="#5B8DB8",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi for xi in x],
+            outsourced,
+            width,
+            label="Bought",
+            color="#E07B54",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi + delta for xi in x],
+            demand,
+            width,
+            label="Demand",
+            color="#AAAAAA",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+    else:
+        width = 0.18
+        gap = 0.02
+        offset = width / 2 + gap / 2
+        bars_prod = ax.bar(
+            [xi - offset for xi in x],
+            produced,
+            width,
+            label="Produced",
+            color="#5B8DB8",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi + offset for xi in x],
+            demand,
+            width,
+            label="Demand",
+            color="#AAAAAA",
+            edgecolor="white",
+            linewidth=0.6,
+        )
 
     ax.set_xticks(list(x))
     ax.set_xticklabels(products, fontsize=9)
     ax.set_ylabel("Volume (L)", fontsize=10)
-    ax.set_title("Final Production vs. Demand", fontsize=10)
+    if show_bought:
+        ax.set_title("Final Production vs. Bought vs. Demand", fontsize=10)
+    else:
+        ax.set_title("Final Production vs. Demand", fontsize=10)
     ax.legend(fontsize=8, framealpha=0.85)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:,.0f}"))
     ax.set_axisbelow(True)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.5)
 
-    y_max = max(max(produced), max(demand))
+    y_max = max(max(produced), max(demand), max(outsourced) if outsourced else 0.0)
     ax.set_ylim(0, y_max * 1.18)
     for bar in bars_prod:
         h = bar.get_height()
@@ -899,6 +984,21 @@ def main():
     print(f"  Generated: {data.get('generated', 'N/A')}")
     print(f"  Tasks    : {len(data['tasks'])}")
     print(f"  Makespan : {data.get('makespan')} h")
+    if data.get("revenue") is not None:
+        print(f"  Revenue  : {data.get('revenue')}")
+
+    model_name = str(data.get("model_name", ""))
+    toml_path = Path(args.toml) if args.toml else infer_toml_path(filepath, model_name)
+    if not args.toml:
+        print(f"  TOML     : auto -> {toml_path}")
+    else:
+        print(f"  TOML     : {toml_path}")
+
+    deadline_hours = None
+    if is_economic_context(filepath, model_name):
+        deadline_hours = read_deadline_hours(toml_path)
+        if deadline_hours is not None:
+            print(f"  Deadline : {deadline_hours} h")
 
     fig = plt.figure(figsize=(16, 10), layout="constrained")
     fig.get_layout_engine().set(rect=(0, 0.025, 1, 1))
@@ -911,7 +1011,7 @@ def main():
         ax_gantt = fig.add_subplot(111)
         ax_prod = None
 
-    plot_solution(data, ax_gantt)
+    plot_solution(data, ax_gantt, deadline_hours=deadline_hours)
     if ax_prod is not None:
         plot_production(data, ax_prod, show_dsch=not args.hide_dsch)
 
@@ -932,11 +1032,6 @@ def main():
         print(f"Saved to {out_path}")
 
     if args.stn:
-        toml_path = (
-            Path(args.toml)
-            if args.toml
-            else infer_toml_path(filepath, str(data.get("model_name", "")))
-        )
         if not args.toml:
             print(f"Auto-selected STN TOML: {toml_path}")
         if not toml_path.exists():
