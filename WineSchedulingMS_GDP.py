@@ -674,7 +674,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.A22 = pyo.Constraint(
         rule=lambda m: m.JSTsinusar
         == m.nJST
-        - sum(m.y[i, j, n] for j in m.JST for n in m.n for i in m.ist if (i, j) in m.ij)
+        - sum(m.y[i, j, n_max] for j in m.JST for i in m.ist if (i, j) in m.ij)
     )
 
     def A23_rule(model, j, i):

@@ -968,9 +968,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Unused storage units (A22)
     def A22_rule(model):
         used_units = sum(
-            model.y[i, j, n]
+            model.y[i, j, n_max]
             for j in model.JST
-            for n in model.n
             for i in model.ist
             if (i, j) in model.ij
         )
