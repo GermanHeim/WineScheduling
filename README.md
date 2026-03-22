@@ -47,12 +47,12 @@ This lets the same formulation handle very different behaviors just by set membe
 
 Activation and unit-assignment limits:
 
-- `iMax`: Maximum number of activations for non-storage tasks
-- `jMax`: Maximum number of units assigned to an active non-storage task at an event
-- `jMin`: Minimum number of units assigned to an active non-storage task at an event
-- `iMaxST`: Maximum activation indicator for storage tasks (applied at final event)
-- `jMaxST`: Maximum number of units assigned to an active storage task at an event
-- `jMinST`: Minimum number of units assigned to an active storage task at an event
+- $i_{max}$: Maximum number of activations for non-storage tasks
+- $j_{max}$: Maximum number of units assigned to an active non-storage task at an event
+- $j_{min}$: Minimum number of units assigned to an active non-storage task at an event
+- $i_{max}^{st}$: Maximum activation indicator for storage tasks (applied at final event)
+- $j_{max}^{st}$: Maximum number of units assigned to an active storage task at an event
+- $j_{min}^{st}$: Minimum number of units assigned to an active storage task at an event
 
 ## Decision Variables
 
@@ -131,8 +131,8 @@ Total time spent by all tasks on a unit cannot exceed the horizon H. This preven
 
 Each task:
 
-- needs at least `jMin` units
-- can use at most `jMax` units
+- needs at least $j_{min}$ units
+- can use at most $j_{max}$ units
 - only if the task is active
 
 This supports parallel units (e.g. multiple tanks for one blend).
@@ -143,11 +143,11 @@ $$ \sum_{i \in I^{nst}} \sum_{n} (\alpha_i y_{i,j,n} + \beta_i b_{i,j,n}) \le H 
 
 **Max Units per Task (A01, A01st):**
 
-$$ \sum_{j} y_{i,j,n} \le jMax \cdot W_{i,n} $$
+$$ \sum_{j} y_{i,j,n} \le j_{max} \cdot W_{i,n} $$
 
 **Min Units per Task (A02, A02st):**
 
-$$ \sum_{j} y_{i,j,n} \ge jMin \cdot W_{i,n} $$
+$$ \sum_{j} y_{i,j,n} \ge j_{min} \cdot W_{i,n} $$
 
 **Single Task per Unit (A03):**
 
@@ -174,13 +174,13 @@ If it is not used, batch size is forced to zero.
 
 **Max Activations - Non-storage tasks (A06):**
 
-$$ \sum_{n} W_{i,n} \le iMax \quad \forall i \in I^{nst} $$
+$$ \sum_{n} W_{i,n} \le i_{max} \quad \forall i \in I^{nst} $$
 
 Limits how many times a non-storage task can occur (e.g. one fermentation per batch).
 
 **Max Activations - Storage tasks (A06st):**
 
-$$ W_{i,N} \le iMaxST \quad \forall i \in I^{st} $$
+$$ W_{i,N} \le i_{max}^{st} \quad \forall i \in I^{st} $$
 
 With the persistence chain (A14, see below), $W_{i,n}$ is non-decreasing, so the value at the final event $N$ counts whether the task ever started.
 
@@ -381,11 +381,11 @@ $$ b_{i,n} = \sum_{j \in J_i} b_{i,j,n} $$
 
 **Global Capacity:**
 
-$$ \sum_{n} W_{i,n} \le iMax $$
+$$ \sum_{n} W_{i,n} \le i_{max} $$
 
 **Unit Constraints:**
 
-$$ \sum_{j} y_{i,j,n} \le jMax \cdot W_{i,n} $$
+$$ \sum_{j} y_{i,j,n} \le j_{max} \cdot W_{i,n} $$
 
 ### 5. Variable Definitions (GDP Adaptations)
 
