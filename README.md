@@ -290,7 +290,7 @@ The finish time of all pre-storage tasks must be ≤ MS.
 
 **Objective Function:**
 
-$$ \min Z = MS + Penalty_{unused} - Penalty_{space} $$
+$$ \min Z = MS + Penalty_{unused} + Penalty_{space} $$
 
 Minimize makespan while trying to:
 
