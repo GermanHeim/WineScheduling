@@ -345,7 +345,7 @@ Instead of 3-way disjunctions, precedence is expressed as conditional constraint
 
 **General Precedence:**
 
-$$ W_{i',n} = 1 \land W_{i,n+1} = 1 \implies Ts_{i,n+1} \ge Tf_{i',n} $$
+$$ W_{i',n} \land W_{i,n+1} \implies Ts_{i,n+1} \ge Tf_{i',n} $$
 
 Linearized as:
 
@@ -353,7 +353,7 @@ $$ Ts_{i,n+1} \ge Tf_{i',n} - H(2 - W_{i',n} - W_{i,n+1}) $$
 
 **Zero-Wait / No-Intermediate-Storage / Ecobulk (equality when both active):**
 
-$$ W_{i',n} = 1 \land W_{i,n+1} = 1 \implies Ts_{i,n+1} = Tf_{i',n} $$
+$$ W_{i',n} \land W_{i,n+1} \implies Ts_{i,n+1} = Tf_{i',n} $$
 
 Linearized as the $\ge$ above plus:
 
