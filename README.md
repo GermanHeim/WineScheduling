@@ -106,7 +106,7 @@ This creates a natural temporal chain across events.
 **Task Precedence (g11):**
 If task $i$ consumes what task $i'$ produces:
 
-$$ Ts_{i,n+1} \ge Tf_{i',n} - M(1 - W_{i',n}) $$
+$$ Ts_{i,n+1} \ge Tf_{i',n} - H(1 - W_{i',n}) $$
 
 - `i` at `n+1` must start after `i′` at `n` finishes
 - Big-M deactivates the constraint when tasks are inactive
@@ -114,14 +114,14 @@ $$ Ts_{i,n+1} \ge Tf_{i',n} - M(1 - W_{i',n}) $$
 **Zero Wait (ZW) Constraint (g12):**
 For states $s \in S^{zw}$, if $i$ consumes $s$ from $i'$:
 
-$$ Ts_{i,n+1} \le Tf_{i',n} + M(2 - W_{i',n} - W_{i,n+1}) $$
+$$ Ts_{i,n+1} \le Tf_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
 
 Zero-wait: consumption must start exactly when production ends
 
 **No Intermediate Storage (NIS) Constraint (g13):**
 For states $s \in S^{nis}$, if $i$ consumes $s$ from $i'$:
 
-$$ Ts_{i,n+1} \le Tf_{i',n} + M(2 - W_{i',n} - W_{i,n+1}) $$
+$$ Ts_{i,n+1} \le Tf_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
 
 No-intermediate-storage: material cannot sit in inventory
 
