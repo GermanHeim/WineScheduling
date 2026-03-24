@@ -127,7 +127,6 @@
 # ecobulk: (optional, default false)
 #          true -> product is stored in ecobulk-type tanks (subject to A16/A17)
 #          false -> no ecobulk constraint
-
 [lines.1]
 product = "Red1"
 steps = ["Fa", "Fl", "Fr"]
@@ -183,61 +182,30 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
 [templates.Pr]
     alpha = 8.0
     beta = 0.0
-
-    # Allowed units and limits [Bmin, Bmax]
-    [templates.Pr.compatible_units]
-        press = [500, 16000]
+    compatible_units = ["press"]
 
 # Fermentation (Fa)
 [templates.Fa]
     alpha = 240.0  # Duration
     beta = 0.0
-
-    # Allowed Tanks and Limits [Bmin, Bmax]
-    [templates.Fa.compatible_units]
-        inox5000  = [500, 4000]
-        inox10000 = [1000, 8000]
-        inox17500 = [1750, 14000]
-        inox22000 = [2200, 17600]
+    compatible_units = ["inox5000", "inox10000", "inox17500", "inox22000"]
 
 # Malolactic fermentation (Fl)
 [templates.Fl]
     alpha = 720.0
     beta = 0.0
-
-    # Allowed Tanks and Limits [Bmin, Bmax]
-    [templates.Fl.compatible_units]
-        inox22000  = [4400, 21560]
-        subte6300  = [1260, 6174]
-        subte7500  = [1500, 7350]
-        subte9000  = [1800, 8820]
-        subte9500  = [1900, 9310]
-        subte12700 = [2540, 12446]
+    compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700"]
 
 # Cold stabilization (Fr)
 [templates.Fr]
     alpha = 168.0
     beta = 0.0
-
-    # Allowed Tanks and Limits [Bmin, Bmax]
-    [templates.Fr.compatible_units]
-        iso5000  = [1000, 5000]
-        iso10000 = [2000, 10000]
+    compatible_units = ["iso5000", "iso10000"]
 
 # Storage (Alm)
 [templates.Alm]
     beta = 0.0
-
-    # Allowed Tanks and Limits [Bmin, Bmax]
-    [templates.Alm.compatible_units]
-        inox22000  = [20900, 22000]
-        subte6300  = [5985, 6300]
-        subte7500  = [7125, 7500]
-        subte9000  = [8550, 9000]
-        subte9500  = [9025, 9500]
-        subte12700 = [12065, 12700]
-        iso5000    = [4750, 5000]
-        iso10000   = [9500, 10000]
+    compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700", "iso5000", "iso10000"]
 
 # 7. State Consumption/Production Coefficients (rho)
 #
@@ -418,3 +386,56 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
 [rho.Alm6]
     rhoIScons = {Rose2 = -1.0}
     rhoISprod = {Rose2 = 1.0}
+
+# 8. Units
+#
+# Centralized unit definitions.
+# - quantity: number of physically available units of that type
+# - task_bounds.<Task>: [Bmin, Bmax] for each compatible task
+[units.press]
+    quantity = 1
+    task_bounds = {Pr = [500, 16000]}
+
+[units.inox5000]
+    quantity = 1
+    task_bounds = {Fa = [500, 4000]}
+
+[units.inox10000]
+    quantity = 1
+    task_bounds = {Fa = [1000, 8000]}
+
+[units.inox17500]
+    quantity = 1
+    task_bounds = {Fa = [1750, 14000]}
+
+[units.inox22000]
+    quantity = 1
+    task_bounds = {Fa = [2200, 17600], Fl = [4400, 21560], Alm = [20900, 22000]}
+
+[units.subte6300]
+    quantity = 1
+    task_bounds = {Fl = [1260, 6174], Alm = [5985, 6300]}
+
+[units.subte7500]
+    quantity = 1
+    task_bounds = {Fl = [1500, 7350], Alm = [7125, 7500]}
+
+[units.subte9000]
+    quantity = 1
+    task_bounds = {Fl = [1800, 8820], Alm = [8550, 9000]}
+
+[units.subte9500]
+    quantity = 1
+    task_bounds = {Fl = [1900, 9310], Alm = [9025, 9500]}
+
+[units.subte12700]
+    quantity = 1
+    task_bounds = {Fl = [2540, 12446], Alm = [12065, 12700]}
+
+[units.iso5000]
+    quantity = 1
+    task_bounds = {Fr = [1000, 5000], Alm = [4750, 5000]}
+
+[units.iso10000]
+    quantity = 1
+    task_bounds = {Fr = [2000, 10000], Alm = [9500, 10000]}
