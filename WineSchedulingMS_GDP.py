@@ -117,36 +117,34 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         initialize=[t for t in tasks if t.startswith(("Pr", "Fa", "Fl"))]
     )
 
-    model.j = pyo.Set(
-        initialize=[
-            "inox5000",
-            "inox10000",
-            "inox17500",
-            "inox22000",
-            "subte6300",
-            "subte7500",
-            "subte9000",
-            "subte9500",
-            "subte12700",
-            "iso10000",
-            "iso5000",
-            "press",
-        ]
-    )
+    units_cfg = params.get("units", {})
+    if not units_cfg:
+        raise ValueError("Missing required section [units] in TOML")
 
-    model.JST = pyo.Set(
-        initialize=[
-            "subte6300",
-            "subte7500",
-            "subte9000",
-            "subte9500",
-            "iso10000",
-            "iso5000",
-        ]
-    )
+    unit_instances = []
+    unit_instances_by_base = {}
+    storage_units = []
+
+    for unit_name, unit_cfg in units_cfg.items():
+        quantity = int(unit_cfg.get("quantity", 1))
+        if quantity < 1:
+            raise ValueError(f"Unit '{unit_name}' must define quantity >= 1")
+        unit_instances_by_base[unit_name] = []
+        for idx in range(1, quantity + 1):
+            inst_name = unit_name if quantity == 1 else f"{unit_name}#{idx}"
+            unit_instances.append(inst_name)
+            unit_instances_by_base[unit_name].append(inst_name)
+            if "Alm" in unit_cfg.get("task_bounds", {}):
+                storage_units.append(inst_name)
+
+    model.j = pyo.Set(initialize=unit_instances)
+    model.JST = pyo.Set(initialize=storage_units)
 
     model.nJST = pyo.Param(initialize=len(model.JST))
     model.inv_nJST = pyo.Param(initialize=1 / len(model.JST))
+
+    if len(storage_units) == 0:
+        raise ValueError("No storage units found with 'Alm' in [units.*.task_bounds]")
 
     # Task-unit pairs (ij)
     ij_data = []
@@ -158,7 +156,16 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             and "compatible_units" in params["templates"][prefix]
         ):
             for unit in params["templates"][prefix]["compatible_units"]:
-                ij_data.append((task, unit))
+                if unit not in units_cfg:
+                    raise ValueError(
+                        f"Template '{prefix}' references unknown unit '{unit}'"
+                    )
+                if prefix not in units_cfg[unit].get("task_bounds", {}):
+                    raise ValueError(
+                        f"Unit '{unit}' has no task_bounds entry for task '{prefix}'"
+                    )
+                for unit_inst in unit_instances_by_base[unit]:
+                    ij_data.append((task, unit_inst))
     model.ij = pyo.Set(initialize=ij_data, dimen=2)
 
     model.n = pyo.Set(initialize=list(range(1, params["global"]["n_max"] + 1)))
@@ -282,10 +289,12 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
                 model.alpha[task] = template["alpha"]
             model.beta[task] = template["beta"]
             if "compatible_units" in template:
-                for unit, limits in template["compatible_units"].items():
-                    if (task, unit) in model.ij:
-                        model.Bmin[task, unit] = limits[0]
-                        model.Bmax[task, unit] = limits[1]
+                for unit in template["compatible_units"]:
+                    limits = units_cfg[unit]["task_bounds"][prefix]
+                    for unit_inst in unit_instances_by_base[unit]:
+                        if (task, unit_inst) in model.ij:
+                            model.Bmin[task, unit_inst] = limits[0]
+                            model.Bmax[task, unit_inst] = limits[1]
 
     total = 0.0
     for j in model.JST:
