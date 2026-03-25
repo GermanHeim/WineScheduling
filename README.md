@@ -336,7 +336,11 @@ b_{i,j,n} = 0
 \neg W_{i,n} \\
 b_{i,n} = 0 \\
 Tf_{i,n} = Ts_{i,n} \\
-\forall j \in J_i: y_{i,j,n} = 0, \; b_{i,j,n} = 0
+\forall j \in J_i:
+\begin{bmatrix}
+y_{i,j,n} = 0 \\
+b_{i,j,n} = 0
+\end{bmatrix}
 \end{bmatrix}$$
 
 A global constraint enforces at most one task per unit per event:
