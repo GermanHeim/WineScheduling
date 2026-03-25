@@ -405,3 +405,85 @@ $$ \sum_{j} y_{i,j,n} \le j_{max} \cdot W_{i,n} $$
 
 - **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and algebraic constraints (A01, A06, precedence, persistence, etc.), and activates terminal storage horizon sync inside the final storage disjunct.
 - **$y_{i,j,n}$:** Unit assignment binary; retained for global constraints (A03, batch limits).
+
+# Economic Optimization
+
+This section documents the economic variant implemented in `WineSchedulingEconomic_GDP.py` using `parameters.toml`. The scheduling structure is the same GDP formulation described above, with added market variables, raw-material costs, and a profit-maximizing objective.
+
+### Additional Parameters
+
+- $Price_s$: selling price of product state $s$
+- $C^{out}_s$: outsourcing cost of product state $s$
+- $Deadline$: target completion time
+- $c^{late}$: lateness penalty coefficient
+- $c^{empty}$: penalty on unused storage tanks
+- $c^{air}$: penalty on free storage space
+- $C_s^{raw}$: raw-material cost per liter for shared raw pools $s \in S^R$
+- $\overline{\Delta B}$: average usable storage-capacity range used to normalize free-space penalties
+
+### Additional Variables
+
+- $Outsource_s \ge 0$: outsourced quantity of product $s$
+- $Lateness \ge 0$: tardiness beyond deadline
+- $JST_{unused} \ge 0$: number of storage tanks left unused
+- $Freespace_j \ge 0$: remaining free volume in storage unit $j$
+- $MS \ge 0$: makespan (retained from scheduling model)
+- $FinalProd_s \ge 0$: final internally produced quantity of product state $s$
+
+### Economic Constraints
+
+Demand can be met by internal production plus outsourcing:
+
+$$ FinalProd_s + Outsource_s \ge D_s \quad \forall s \in S^{Market} $$
+
+Final produced quantity is linked to last-event inventory and production:
+
+$$ ST_{s,N} + \sum_{i:(i,s)\in IPS} \rho^{prod}_{i,s} b_{i,N} = FinalProd_s \quad \forall s \in S^P $$
+
+Lateness definition:
+
+$$ Lateness \ge MS - Deadline $$
+
+A storage utilization index is defined from storage assignment at the final event point. With storage persistence, a tank that is ever activated remains active through $N$, so final-event activity is equivalent to "used at least once":
+
+$$ JST_unused = n_{JST} - \sum_{j \in JST}\sum_{\substack{i \in I^{st}:\\(i,j)\in IJ}} y_{i,j,N} $$
+
+This quantity represents the number of storage tanks that are inactive at the final event.
+
+Free-space envelope for storage units (for each compatible pair $(i,j)$, $i \in I^{st}$, $j \in JST$):
+
+$$ Freespace_j \le B^{max}_{i,j} - \sum_{n\in N} b_{i,j,n} + B^{max}_{i,j}\left(1-\sum_{n\in N} y_{i,j,n}\right) $$
+
+$$ Freespace_j \ge B^{max}_{i,j} - \sum_{n\in N} b_{i,j,n} - B^{max}_{i,j}\left(1-\sum_{n\in N} y_{i,j,n}\right) $$
+
+### Economic Objective
+
+Revenue term:
+
+$$ Revenue = \sum_{s\in S^{Market}} Price_s \cdot D_s $$
+
+The model treats demand as committed sales, so this revenue term is constant with respect to scheduling decisions.
+
+Outsourcing cost term:
+
+$$ OutsourcingCost = \sum_{s\in S^{Market}} C^{out}_s \cdot Outsource_s $$
+
+Lateness cost term:
+
+$$ LatenessCost = c^{late} \cdot Lateness $$
+
+Raw material cost term:
+
+$$ RawMaterialCost = \sum_{s\in S^R}\sum_{i:(i,s)\in ICS}\sum_{n\in N} C_s^{raw}\,\left(-\rho^{cons}_{i,s}\right)\,b_{i,n} $$
+
+Storage penalties:
+
+$$ Penalty_{empty} = c^{empty} \cdot \frac{1}{n_{JST}} \cdot JST_{unused} $$
+
+Because of persistence (A15), once a storage assignment is activated, $y_{i,j,n}=1$ for all subsequent events. Therefore, evaluating assignment at the final event is equivalent to checking whether a tank was ever used, so this penalty discourages leaving tanks unassigned.
+
+$$ Penalty_{air} = c^{air} \cdot \frac{1}{\overline{\Delta B}} \cdot \sum_{j\in JST} Freespace_j $$
+
+Profit-maximization objective:
+
+$$ \max Z = Revenue - OutsourcingCost - LatenessCost - RawMaterialCost - Penalty_{empty} - Penalty_{air} $$
