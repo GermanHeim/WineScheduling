@@ -779,6 +779,7 @@ def plot_solution(
             linestyle="--",
             linewidth=1.4,
             alpha=0.9,
+            zorder=0,
         )
 
     legend_handles = [
