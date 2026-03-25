@@ -640,10 +640,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.Tfj = pyo.Var(
         model.j, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
     )
-    model.ProdFinal = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
-    model.FueraDeposito = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
+    model.FinalProd = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals)
-    model.JSTsinusar = pyo.Var(domain=pyo.NonNegativeReals)
+    model.JST_unused = pyo.Var(domain=pyo.NonNegativeReals)
     model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
 
     # Global lower bound for makespan (longest line path)
@@ -658,10 +657,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.ms_lb = pyo.Constraint(expr=model.MS >= min_makespan)
 
     # Upper bounds on final production
-    ProdFinal_bounds = params["product_ub"]
+    FinalProd_bounds = params["product_ub"]
     for sp in model.SP:  # type: ignore
-        if sp in ProdFinal_bounds:
-            model.ProdFinal[sp].setub(ProdFinal_bounds[sp])
+        if sp in FinalProd_bounds:
+            model.FinalProd[sp].setub(FinalProd_bounds[sp])
 
     # ========================================
     # CONSTRAINTS
@@ -771,7 +770,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Demand constraint (g17)
     def g17_rule(model, s):
-        return model.ProdFinal[s] >= model.D[s]
+        return model.FinalProd[s] >= model.D[s]
 
     model.g17 = pyo.Constraint(model.SP, rule=g17_rule)
 
@@ -953,21 +952,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             for i in model.i
             if (i, s) in model.IPS
         )
-        return model.ST[s, n] + produced == model.ProdFinal[s]
+        return model.ST[s, n] + produced == model.FinalProd[s]
 
     model.A18 = pyo.Constraint(model.A18_indices, rule=A18_rule)
-
-    # Out of deposit storage (A19)
-    def A19_rule(model, s):
-        in_deposit = sum(
-            model.rhoISprod[i, s] * model.b[i, n]
-            for i in model.ist
-            for n in model.n
-            if (i, s) in model.IPS
-        )
-        return model.FueraDeposito[s] == model.ProdFinal[s] - in_deposit
-
-    model.A19 = pyo.Constraint(model.SP, rule=A19_rule)
 
     # Makespan constraint (A21)
     def A21_rule(model, i, n):
@@ -983,7 +970,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             for i in model.ist
             if (i, j) in model.ij
         )
-        return model.JSTsinusar == model.nJST - used_units
+        return model.JST_unused == model.nJST - used_units
 
     model.A22 = pyo.Constraint(rule=A22_rule)
 
@@ -1010,7 +997,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # OBJECTIVE FUNCTION
     # ========================================
     def obj_func(model):
-        penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JSTsinusar
+        penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JST_unused
 
         penalty_space = (
             model.penaltyAir

@@ -416,10 +416,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.Tfj = pyo.Var(
         model.j, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
     )
-    model.ProdFinal = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
-    model.FueraDeposito = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
+    model.FinalProd = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
-    model.JSTsinusar = pyo.Var(domain=pyo.NonNegativeReals)
+    model.JST_unused = pyo.Var(domain=pyo.NonNegativeReals)
     model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
 
     # Global lower bound for makespan (longest line path)
@@ -433,10 +432,10 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
     model.ms_lb = pyo.Constraint(expr=model.MS >= min_makespan)
 
-    ProdFinal_bounds = params["product_ub"]
+    FinalProd_bounds = params["product_ub"]
     for sp in model.SP:
-        if sp in ProdFinal_bounds:
-            model.ProdFinal[sp].setub(ProdFinal_bounds[sp])
+        if sp in FinalProd_bounds:
+            model.FinalProd[sp].setub(FinalProd_bounds[sp])
 
     # ========================================
     # DISJUNCT PRE-CREATION
@@ -527,7 +526,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.h16 = pyo.Constraint(model.SZW, rule=h16_rule)
 
-    model.g17 = pyo.Constraint(model.SP, rule=lambda m, s: m.ProdFinal[s] >= m.D[s])
+    model.g17 = pyo.Constraint(model.SP, rule=lambda m, s: m.FinalProd[s] >= m.D[s])
 
     # A01/A02/A01st/A02st: unit-count bounds using disjunct binary_indicator_var as W
     def A01_rule(model, i, n):
@@ -667,21 +666,13 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         [n_max],
         rule=lambda m, s, n: m.ST[s, n]
         + sum(m.rhoISprod[i, s] * m.b[i, n] for i in m.i if (i, s) in m.IPS)
-        == m.ProdFinal[s],
-    )
-    model.A19 = pyo.Constraint(
-        model.SP,
-        rule=lambda m, s: m.FueraDeposito[s]
-        == m.ProdFinal[s]
-        - sum(
-            m.rhoISprod[i, s] * m.b[i, n] for i in m.ist for n in m.n if (i, s) in m.IPS
-        ),
+        == m.FinalProd[s],
     )
     model.A21 = pyo.Constraint(
         model.ipst, [n_max], rule=lambda m, i, n: m.Tf[i, n] <= m.MS
     )
     model.A22 = pyo.Constraint(
-        rule=lambda m: m.JSTsinusar
+        rule=lambda m: m.JST_unused
         == m.nJST
         - sum(m.y[i, j, n_max] for j in m.JST for i in m.ist if (i, j) in m.ij)
     )
@@ -862,7 +853,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # OBJECTIVE FUNCTION
     # ========================================
     def obj_func(model):
-        penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JSTsinusar
+        penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JST_unused
         penalty_space = (
             model.penaltyAir
             * model.inv_total_avg_range
