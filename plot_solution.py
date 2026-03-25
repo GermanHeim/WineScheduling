@@ -6,6 +6,7 @@ Usage:
     python plot_solution.py results_gdp.txt # plots a specific file
     python plot_solution.py --no-show       # save to PNG without showing
     python plot_solution.py --stn --no-show # also plot the STN graph
+    python plot_solution.py --publish       # save to EPS (publication mode)
 
 Produces two figures:
     1. Gantt chart of the task schedule (one bar per unit)
@@ -20,6 +21,7 @@ from pathlib import Path
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
+from matplotlib.artist import Artist
 from matplotlib.lines import Line2D
 from matplotlib.ticker import MultipleLocator
 
@@ -246,7 +248,8 @@ def parse_production(text: str) -> list[dict]:
 
     if production and outsourced_by_product:
         for item in production:
-            item["outsourced"] = outsourced_by_product.get(item["product"], 0.0)
+            product_key = str(item.get("product", ""))
+            item["outsourced"] = outsourced_by_product.get(product_key, 0.0)
     else:
         for m in produced_out_demand_matches:
             production.append(
@@ -315,6 +318,38 @@ def task_stage(task_name: str) -> str:
 
 def task_line(task_name: str) -> str:
     return "".join(ch for ch in task_name if ch.isdigit())
+
+
+def format_task_label(task_name: str, publish_mode: bool) -> str:
+    """Return a display label for task codes, expanded in publish mode."""
+    if not publish_mode:
+        return task_name
+
+    stage = task_stage(task_name)
+    line = task_line(task_name)
+    long_names = {
+        "Fa": "Alcoholic Fermentation",
+        "Fl": "Malolactic Fermentation",
+        "Alm": "Storage",
+        "Fr": "Cold Stabilization",
+    }
+    if stage in long_names and line:
+        return f"{long_names[stage]} ({line})"
+    return task_name
+
+
+def format_unit_label(unit_name: str, publish_mode: bool) -> str:
+    """Return a display label for units, expanded in publish mode."""
+    if not publish_mode:
+        return unit_name
+
+    m = re.match(r"^(inox|subte|iso)(\d+)$", unit_name, re.IGNORECASE)
+    if not m:
+        return unit_name
+
+    family = m.group(1).lower().capitalize()
+    capacity = m.group(2)
+    return f"{family} {capacity}"
 
 
 def parse_stn_data(toml_file: str) -> dict:
@@ -677,7 +712,10 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
 
 
 def plot_solution(
-    data: dict, ax: plt.Axes, deadline_hours: float | None = None
+    data: dict,
+    ax: plt.Axes,
+    deadline_hours: float | None = None,
+    publish_mode: bool = False,
 ) -> None:
     tasks = data["tasks"]
     if not tasks:
@@ -738,10 +776,11 @@ def plot_solution(
             # but only if the bar centre is within xmax
             label_x = t["start"] + duration / 2
             if duration > 30 and label_x <= xmax:
+                display_task = format_task_label(t["task"], publish_mode)
                 ax.text(
                     label_x,
                     yi,
-                    f"{t['task']}\n{u['batch']:.0f} L",
+                    f"{display_task}\n{u['batch']:.0f} L",
                     ha="center",
                     va="center",
                     fontsize=6.5,
@@ -751,7 +790,8 @@ def plot_solution(
                 )
 
     ax.set_yticks(range(len(ordered_units)))
-    ax.set_yticklabels(ordered_units, fontsize=9)
+    display_units = [format_unit_label(u, publish_mode) for u in ordered_units]
+    ax.set_yticklabels(display_units, fontsize=9)
     ax.set_ylim(-0.5, len(ordered_units) - 0.5)
     ax.invert_yaxis()
     ax.set_ylabel("Unit", fontsize=10)
@@ -782,16 +822,20 @@ def plot_solution(
             zorder=0,
         )
 
-    legend_handles = [
-        mpatches.Patch(facecolor=c, label=label)
-        for label, c in [
-            ("Pressing (Pr)", TASK_COLORS["Pr"]),
-            ("Alcoholic fermentation (Fa)", TASK_COLORS["Fa"]),
-            ("Lactic fermentation (Fl)", TASK_COLORS["Fl"]),
-            ("Filtration (Fr)", TASK_COLORS["Fr"]),
-            ("Storage (Alm)", TASK_COLORS["Alm"]),
-        ]
-        if any(t["task"].startswith(label.split("(")[1].rstrip(")")) for t in tasks)
+    legend_defs = [
+        ("Pr", "Pressing", TASK_COLORS["Pr"]),
+        ("Fa", "Alcoholic fermentation", TASK_COLORS["Fa"]),
+        ("Fl", "Lactic fermentation", TASK_COLORS["Fl"]),
+        ("Fr", "Filtration", TASK_COLORS["Fr"]),
+        ("Alm", "Storage", TASK_COLORS["Alm"]),
+    ]
+    legend_handles: list[Artist] = [
+        mpatches.Patch(
+            facecolor=color,
+            label=name if publish_mode else f"{name} ({code})",
+        )
+        for code, name, color in legend_defs
+        if any(t["task"].startswith(code) for t in tasks)
     ]
     if deadline_hours is not None and deadline_hours >= 0:
         legend_handles.append(
@@ -953,6 +997,20 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
             )
 
 
+def build_output_path(
+    default_stem: str, override: str | None, default_ext: str, publish: bool
+) -> Path:
+    """Resolve output path and enforce EPS extension in publish mode."""
+    if override:
+        out_path = Path(override)
+    else:
+        out_path = Path(f"{default_stem}.{default_ext}")
+
+    if publish and out_path.suffix.lower() != ".eps":
+        out_path = out_path.with_suffix(".eps")
+    return out_path
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Plot wine scheduling results from a txt file."
@@ -971,7 +1029,23 @@ def main():
     parser.add_argument(
         "--output",
         default=None,
-        help="Output PNG filename (default: <input_file>_gantt.png)",
+        help=(
+            "Output filename for Gantt chart "
+            "(default: <input_file>_gantt.png or .eps with --publish)"
+        ),
+    )
+    parser.add_argument(
+        "--production-output",
+        default=None,
+        help=(
+            "Output filename for production bar chart "
+            "(default: <input_file>_production.eps with --publish; ignored otherwise)"
+        ),
+    )
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Publication mode: save figures as EPS files.",
     )
     parser.add_argument(
         "--stn",
@@ -989,7 +1063,10 @@ def main():
     parser.add_argument(
         "--stn-output",
         default=None,
-        help="Output PNG filename for STN graph (default: <toml_file>_stn.png)",
+        help=(
+            "Output filename for STN graph "
+            "(default: <toml_file>_stn.png or .eps with --publish)"
+        ),
     )
     parser.add_argument(
         "--hide-dsch",
@@ -1026,23 +1103,41 @@ def main():
         if deadline_hours is not None:
             print(f"  Deadline : {deadline_hours} h")
 
-    fig = plt.figure(figsize=(16, 10), layout="constrained")
-    fig.get_layout_engine().set(rect=(0.0, 0.025, 1.0, 1.0))
     has_production = bool(data.get("production"))
-    if has_production:
-        gs = fig.add_gridspec(2, 1, height_ratios=[3, 1])
-        ax_gantt = fig.add_subplot(gs[0])
-        ax_prod = fig.add_subplot(gs[1])
-    else:
-        ax_gantt = fig.add_subplot(111)
-        ax_prod = None
 
-    plot_solution(data, ax_gantt, deadline_hours=deadline_hours)
+    if args.publish:
+        fig_main = plt.figure(figsize=(16, 8), layout="constrained")
+        ax_gantt = fig_main.add_subplot(111)
+
+        if has_production:
+            fig_prod = plt.figure(figsize=(16, 5), layout="constrained")
+            ax_prod = fig_prod.add_subplot(111)
+        else:
+            fig_prod = None
+            ax_prod = None
+    else:
+        fig_main = plt.figure(figsize=(16, 10), layout="constrained")
+        if has_production:
+            gs = fig_main.add_gridspec(2, 1, height_ratios=[3, 1])
+            ax_gantt = fig_main.add_subplot(gs[0])
+            ax_prod = fig_main.add_subplot(gs[1])
+            fig_prod = None
+        else:
+            ax_gantt = fig_main.add_subplot(111)
+            ax_prod = None
+            fig_prod = None
+
+    if has_production and args.production_output is not None and not args.publish:
+        print("Note: --production-output is ignored unless --publish is set.")
+
+    plot_solution(
+        data, ax_gantt, deadline_hours=deadline_hours, publish_mode=args.publish
+    )
     if ax_prod is not None:
         plot_production(data, ax_prod, show_dsch=not args.hide_dsch)
 
-    if data.get("generated"):
-        fig.text(
+    if data.get("generated") and not args.publish:
+        fig_main.text(
             0.99,
             0.012,
             f"Generated: {data['generated']}",
@@ -1051,11 +1146,51 @@ def main():
             fontsize=7,
             color="gray",
         )
+        if fig_prod is not None:
+            fig_prod.text(
+                0.99,
+                0.012,
+                f"Generated: {data['generated']}",
+                ha="right",
+                va="bottom",
+                fontsize=7,
+                color="gray",
+            )
 
-    if args.no_show or args.output:
-        out_path = args.output or filepath.stem + "_gantt.png"
-        fig.savefig(out_path, dpi=800, bbox_inches="tight")
-        print(f"Saved to {out_path}")
+    default_ext = "eps" if args.publish else "png"
+    save_main_requested = (
+        args.no_show
+        or args.output is not None
+        or args.publish
+        or args.production_output is not None
+    )
+
+    if save_main_requested:
+        if args.publish:
+            gantt_out = build_output_path(
+                f"{filepath.stem}_gantt", args.output, default_ext, args.publish
+            )
+            fig_main.savefig(gantt_out, dpi=800, bbox_inches="tight")
+            print(f"Saved Gantt chart to {gantt_out}")
+
+            if fig_prod is not None:
+                prod_out = build_output_path(
+                    f"{filepath.stem}_production",
+                    args.production_output,
+                    default_ext,
+                    args.publish,
+                )
+                fig_prod.savefig(prod_out, dpi=800, bbox_inches="tight")
+                print(f"Saved production chart to {prod_out}")
+        else:
+            prod_out = build_output_path(
+                f"{filepath.stem}_gantt",
+                args.output,
+                default_ext,
+                args.publish,
+            )
+            fig_main.savefig(prod_out, dpi=800, bbox_inches="tight")
+            print(f"Saved combined chart to {prod_out}")
 
     if args.stn:
         if not args.toml:
@@ -1066,12 +1201,18 @@ def main():
             fig_stn = plt.figure(figsize=(18, 10), layout="constrained")
             ax_stn = fig_stn.add_subplot(111)
             plot_stn_graph(str(toml_path), ax_stn, show_dsch=not args.hide_dsch)
-            if args.no_show or args.stn_output:
-                stn_out = args.stn_output or toml_path.stem + "_stn.png"
+            if args.no_show or args.stn_output or args.publish:
+                stn_out = build_output_path(
+                    f"{toml_path.stem}_stn", args.stn_output, default_ext, args.publish
+                )
                 fig_stn.savefig(stn_out, dpi=450, bbox_inches="tight")
                 print(f"Saved STN graph to {stn_out}")
 
-    if not (args.no_show or args.output or args.stn_output):
+    if not (
+        save_main_requested
+        or args.stn_output is not None
+        or (args.publish and args.stn)
+    ):
         plt.show()
 
 
