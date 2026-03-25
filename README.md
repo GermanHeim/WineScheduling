@@ -272,13 +272,13 @@ This constraint forces the system to use at least one storage task (deposit) for
 
 **Demand Satisfaction (g17):**
 
-$$ ProdFinal_s \ge D_s $$
+$$ FinalProd_s \ge D_s $$
 
 Final production must meet or exceed demand.
 
 **Final Production Calculation (A18):**
 
-$$ ST_{s,N} + \sum_{i \in IPS_s} \rho_{i,s}^{prod} b_{i,N} = ProdFinal_s $$
+$$ ST_{s,N} + \sum_{i \in IPS_s} \rho_{i,s}^{prod} b_{i,N} = FinalProd_s $$
 
 Final inventory plus last-event production equals total produced.
 
@@ -291,6 +291,16 @@ The finish time of all pre-storage tasks must be ≤ MS.
 **Objective Function:**
 
 $$ \min Z = MS + Penalty_{unused} + Penalty_{space} $$
+
+Unused-storage term:
+
+$$ JST_{unused} = n_{JST} - \sum_{j \in JST}\sum_{\substack{i \in I^{st}:\\(i,j)\in IJ}} y_{i,j,N} $$
+
+With storage persistence, this counts tanks that are inactive at the final event and is equivalent to tanks never used.
+
+$$ Penalty_{unused} = c^{empty} \cdot \frac{1}{n_{JST}} \cdot JST_{unused} $$
+
+$$ Penalty_{space} = c^{air} \cdot \frac{1}{\sum_{j\in JST}(\Delta B)/n_{JST}} \cdot \sum_{j\in JST} Freespace_j $$
 
 Minimize makespan while trying to:
 
