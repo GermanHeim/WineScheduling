@@ -36,7 +36,7 @@
     [products.Red1]
         name = "Cabernet Reserva"
         category = "Red"
-        demand = 1134
+        demand = 2000
 
     [products.White1]
         name = "Sauvignon Blanc"
@@ -102,7 +102,7 @@
 # This is equivalent to adding an explicit constraint,
 # but implemented as a variable bound, which is tighter and better for MIP performance.
 [product_ub]
-    Red1 = 1134
+    Red1 = 2000
     White1 = 3465
     Rose1 = 3780
     Red2 = 4000
@@ -285,39 +285,39 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
 
 [rho.Fl1]
     rhoIScons = {v1 = -1.0}
-    rhoISprod = {vl1 = 0.9}
+    rhoISprod = {vl1 = 0.96}
 
 [rho.Fl2]
     rhoIScons = {v2 = -1.0}
-    rhoISprod = {vl2 = 0.9}
+    rhoISprod = {vl2 = 0.96}
 
 [rho.Fl3]
     rhoIScons = {v3 = -1.0}
-    rhoISprod = {vl3 = 0.9}
+    rhoISprod = {vl3 = 0.96}
 
 [rho.Fl4]
     rhoIScons = {v4 = -1.0}
-    rhoISprod = {vl4 = 0.9}
+    rhoISprod = {vl4 = 0.96}
 
 [rho.Fl5]
     rhoIScons = {v5 = -1.0}
-    rhoISprod = {vl5 = 0.9}
+    rhoISprod = {vl5 = 0.96}
 
 [rho.Fl6]
     rhoIScons = {v6 = -1.0}
-    rhoISprod = {vl6 = 0.9}
+    rhoISprod = {vl6 = 0.96}
 
 [rho.Fl7]
     rhoIScons = {v7 = -1.0}
-    rhoISprod = {vl7 = 0.9}
+    rhoISprod = {vl7 = 0.96}
 
 [rho.Fl10]
     rhoIScons = {v10 = -1.0}
-    rhoISprod = {vl10 = 0.9}
+    rhoISprod = {vl10 = 0.96}
 
 [rho.Fl11]
     rhoIScons = {v11 = -1.0}
-    rhoISprod = {vl11 = 0.9}
+    rhoISprod = {vl11 = 0.96}
 
 [rho.Fr1]
     rhoIScons = {vl1 = -1.0}
