@@ -1,4 +1,32 @@
-# Wine Scheduling Model Equations
+# Wine Scheduling Model
+
+## Table of Contents
+- [Wine Scheduling Model](#wine-scheduling-model)
+  - [Table of Contents](#table-of-contents)
+  - [Makespan minimization](#makespan-minimization)
+  - [Sets and Indices](#sets-and-indices)
+  - [Parameters](#parameters)
+  - [Decision Variables](#decision-variables)
+  - [Equations](#equations)
+    - [1. Material Balances](#1-material-balances)
+    - [2. Task Timing and Sequencing](#2-task-timing-and-sequencing)
+    - [3. Unit Assignment and Capacity](#3-unit-assignment-and-capacity)
+    - [4. Batch Sizing](#4-batch-sizing)
+    - [5. Operational Constraints](#5-operational-constraints)
+    - [6. Unit Timing Synchronization](#6-unit-timing-synchronization)
+    - [7. Special Constraints](#7-special-constraints)
+    - [8. Final State and Objective](#8-final-state-and-objective)
+  - [GDP Reformulation](#gdp-reformulation)
+    - [1. Combined Task \& Unit Disjunction (Eq. 2.1)](#1-combined-task--unit-disjunction-eq-21)
+    - [2. Global Precedence Logic (Eq. 2.2)](#2-global-precedence-logic-eq-22)
+    - [3. Storage Persistence via Logical Implications (Eq. 2.3)](#3-storage-persistence-via-logical-implications-eq-23)
+    - [4. Algebraic Constraints (Global Coupling)](#4-algebraic-constraints-global-coupling)
+    - [5. Variable Definitions (GDP Adaptations)](#5-variable-definitions-gdp-adaptations)
+- [Economic Optimization](#economic-optimization)
+    - [Additional Parameters](#additional-parameters)
+    - [Additional Variables](#additional-variables)
+    - [Economic Constraints](#economic-constraints)
+    - [Economic Objective](#economic-objective)
 
 ## Makespan minimization
 
