@@ -112,7 +112,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.i = pyo.Set(initialize=tasks)
     model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
     model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])
-    model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Fr")])
+    model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Cs")])
     model.inpst = pyo.Set(
         initialize=[t for t in tasks if t.startswith(("Pr", "Fa", "Fl"))]
     )
@@ -217,8 +217,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             ICS_data.append((task, f"v{line}"))
             IPS_data.append((task, f"vl{line}"))
             IPS_data.append((task, "dsch"))
-        elif stage == "Fr":
-            # No-Fl lines: Fr consumes v{line} directly; others consume vl{line}
+        elif stage == "Cs":
+            # No-Fl lines: Cs consumes v{line} directly; others consume vl{line}
             if line in no_fl_lines:
                 ICS_data.append((task, f"v{line}"))
             else:
