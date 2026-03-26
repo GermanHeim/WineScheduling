@@ -155,57 +155,57 @@
 #        Pr = pressing (separates liquid from skins/seeds)
 #        Fa = alcoholic fermentation
 #        Fl = lactic (malolactic) fermentation
-#        Fr = cold stabilization / filtration
+#        Cs = cold stabilization
 #        Alm = long-term storage
 # ecobulk: (optional, default false)
 #          true -> product is stored in ecobulk-type tanks (subject to A16/A17)
 #          false -> no ecobulk constraint
 [lines.1]
 product = "Red1"
-steps = ["Fa", "Fl", "Fr"]
+steps = ["Fa", "Fl", "Cs"]
 
 [lines.2]
 product = "White1"
-steps = ["Pr", "Fa", "Fl", "Fr", "Alm"]
+steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
 ecobulk = true
 
 [lines.3]
 product = "Rose1"
-steps = ["Pr", "Fa", "Fl", "Fr", "Alm"]
+steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
 ecobulk = true
 
 [lines.4]
 product = "Red2"
-steps = ["Fa", "Fl", "Fr"]
+steps = ["Fa", "Fl", "Cs"]
 
 [lines.5]
 product = "White2"
-steps = ["Pr", "Fa", "Fl", "Fr", "Alm"]
+steps = ["Pr", "Fa", "Fl", "Cs"]
 ecobulk = true
 
 [lines.6]
 product = "Rose2"
-steps = ["Pr", "Fa", "Fl", "Fr"]
+steps = ["Pr", "Fa", "Fl", "Cs"]
 
 [lines.7]
 product = "Red3"
-steps = ["Fa", "Fl", "Fr"]
+steps = ["Fa", "Fl", "Cs"]
 
 [lines.8]
 product = "White3"
-steps = ["Pr", "Fa", "Fr"]
+steps = ["Pr", "Fa", "Cs"]
 
 [lines.9]
 product = "Rose3"
-steps = ["Pr", "Fa", "Fr"]
+steps = ["Pr", "Fa", "Cs"]
 
 [lines.10]
 product = "Red4"
-steps = ["Fa", "Fl", "Fr"]
+steps = ["Fa", "Fl", "Cs"]
 
 [lines.11]
 product = "White4"
-steps = ["Pr", "Fa", "Fl", "Fr"]
+steps = ["Pr", "Fa", "Fl", "Cs"]
 
 # 6. Tasks Templates
 #
@@ -219,7 +219,7 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
 
 # Fermentation (Fa)
 [templates.Fa]
-    alpha = 240.0  # Duration
+    alpha = 240.0
     beta = 0.0
     compatible_units = ["inox5000", "inox10000", "inox17500", "inox22000"]
 
@@ -229,8 +229,8 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
     beta = 0.0
     compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700"]
 
-# Cold stabilization (Fr)
-[templates.Fr]
+# Cold stabilization (Cs)
+[templates.Cs]
     alpha = 168.0
     beta = 0.0
     compatible_units = ["iso5000", "iso10000"]
@@ -352,47 +352,47 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
     rhoIScons = {v11 = -1.0}
     rhoISprod = {vl11 = 0.96}
 
-[rho.Fr1]
+[rho.Cs1]
     rhoIScons = {vl1 = -1.0}
     rhoISprod = {Red1 = 1.0}
 
-[rho.Fr2]
+[rho.Cs2]
     rhoIScons = {vl2 = -1.0}
     rhoISprod = {White1 = 1.0}
 
-[rho.Fr3]
+[rho.Cs3]
     rhoIScons = {vl3 = -1.0}
     rhoISprod = {Rose1 = 1.0}
 
-[rho.Fr4]
+[rho.Cs4]
     rhoIScons = {vl4 = -1.0}
     rhoISprod = {Red2 = 1.0}
 
-[rho.Fr5]
+[rho.Cs5]
     rhoIScons = {vl5 = -1.0}
     rhoISprod = {White2 = 1.0}
 
-[rho.Fr6]
+[rho.Cs6]
     rhoIScons = {vl6 = -1.0}
     rhoISprod = {Rose2 = 1.0}
 
-[rho.Fr7]
+[rho.Cs7]
     rhoIScons = {vl7 = -1.0}
     rhoISprod = {Red3 = 1.0}
 
-[rho.Fr8]
+[rho.Cs8]
     rhoIScons = {v8 = -1.0}
     rhoISprod = {White3 = 1.0}
 
-[rho.Fr9]
+[rho.Cs9]
     rhoIScons = {v9 = -1.0}
     rhoISprod = {Rose3 = 1.0}
 
-[rho.Fr10]
+[rho.Cs10]
     rhoIScons = {vl10 = -1.0}
     rhoISprod = {Red4 = 1.0}
 
-[rho.Fr11]
+[rho.Cs11]
     rhoIScons = {vl11 = -1.0}
     rhoISprod = {White4 = 1.0}
 
@@ -467,8 +467,8 @@ steps = ["Pr", "Fa", "Fl", "Fr"]
 
 [units.iso5000]
     quantity = 1
-    task_bounds = {Fr = [1000, 5000], Alm = [4750, 5000]}
+    task_bounds = {Cs = [1000, 5000], Alm = [4750, 5000]}
 
 [units.iso10000]
     quantity = 1
-    task_bounds = {Fr = [2000, 10000], Alm = [9500, 10000]}
+    task_bounds = {Cs = [2000, 10000], Alm = [9500, 10000]}

@@ -112,7 +112,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])  # type: ignore
 
     # Pre-storage tasks
-    model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Fr")])
+    model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Cs")])
 
     # Non-pre-storage non-final tasks
     model.inpst = pyo.Set(
@@ -227,8 +227,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             ICS_data.append((task, f"v{line}"))
             IPS_data.append((task, f"vl{line}"))
             IPS_data.append((task, "dsch"))
-        elif stage == "Fr":
-            # No-Fl lines: Fr consumes v{line} directly; others consume vl{line}
+        elif stage == "Cs":
+            # No-Fl lines: Cs consumes v{line} directly; others consume vl{line}
             if line in no_fl_lines:
                 ICS_data.append((task, f"v{line}"))
             else:
@@ -268,7 +268,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         + [f"m{l}" for l in lines if "Pr" in lines_cfg[l]["steps"]]
     )
 
-    # No intermediate storage states (after Fl, before Fr)
+    # No intermediate storage states (after Fl, before Cs)
     model.SNIS = pyo.Set(initialize=[f"vl{l}" for l in lines if l not in no_fl_lines])
 
     # One-to-one task pairs derived from step order
