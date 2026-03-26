@@ -29,7 +29,7 @@ TASK_COLORS: dict[str, str] = {
     "Pr": "#C06C84",  # pressing
     "Fa": "#E07B54",  # alcoholic fermentation
     "Fl": "#5B8DB8",  # lactic fermentation
-    "Fr": "#6BBF7A",  # filtration
+    "Cs": "#6BBF7A",  # cold stabilization
     "Alm": "#9B7EC8",  # storage
 }
 
@@ -331,7 +331,7 @@ def format_task_label(task_name: str, publish_mode: bool) -> str:
         "Fa": "Alcoholic Fermentation",
         "Fl": "Malolactic Fermentation",
         "Alm": "Storage",
-        "Fr": "Cold Stabilization",
+        "Cs": "Cold Stabilization",
     }
     if stage in long_names and line:
         return f"{long_names[stage]} ({line})"
@@ -440,7 +440,7 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
         "Pr": 1.3,
         "Fa": 2.3,
         "Fl": 3.4,
-        "Fr": 4.5,
+        "Cs": 4.5,
         "Alm": 5.6,
     }
 
@@ -826,7 +826,7 @@ def plot_solution(
         ("Pr", "Pressing", TASK_COLORS["Pr"]),
         ("Fa", "Alcoholic fermentation", TASK_COLORS["Fa"]),
         ("Fl", "Lactic fermentation", TASK_COLORS["Fl"]),
-        ("Fr", "Filtration", TASK_COLORS["Fr"]),
+        ("Cs", "Cold stabilization", TASK_COLORS["Cs"]),
         ("Alm", "Storage", TASK_COLORS["Alm"]),
     ]
     legend_handles: list[Artist] = [
