@@ -147,7 +147,7 @@ def export_results(model, model_name, filename=None):
         #     f.write(f"Lateness: {lateness:.2f} hours ({lateness / 24:.2f} days)\n")
 
         # Unused storage units
-        unused = pyo.value(model.JSTsinusar)
+        unused = pyo.value(model.JST_unused)
         f.write(f"\nUnused storage units: {unused:.0f}\n")
 
         # Final production
@@ -161,7 +161,7 @@ def export_results(model, model_name, filename=None):
             outsource_var = model.OutsourcedQty
 
         for s in model.SP:
-            prod = pyo.value(model.ProdFinal[s])
+            prod = pyo.value(model.FinalProd[s])
             demand = pyo.value(model.D[s])
             if demand > 0 or prod > 0.01:
                 line = f"{s}: {prod:.2f} L (Demand: {demand:.2f} L)"
@@ -177,10 +177,6 @@ def export_results(model, model_name, filename=None):
                     if outsourced > 0.01:
                         line += f", Outsourced: {outsourced:.2f} L"
                 f.write(line + "\n")
-                if hasattr(model, "FueraDeposito"):
-                    out_of_deposit = pyo.value(model.FueraDeposito[s])
-                    if out_of_deposit > 0.01:
-                        f.write(f"  Out of deposit: {out_of_deposit:.2f} L\n")
 
         # Task schedule
         f.write(f"\n{sep}\n")
