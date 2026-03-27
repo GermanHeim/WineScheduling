@@ -343,6 +343,10 @@ def format_unit_label(unit_name: str, publish_mode: bool) -> str:
     if not publish_mode:
         return unit_name
 
+    UNIT_PUBLISH_NAMES: dict[str, str] = {"press": "Press"}
+    if unit_name in UNIT_PUBLISH_NAMES:
+        return UNIT_PUBLISH_NAMES[unit_name]
+
     m = re.match(r"^(inox|subte|iso)(\d+)$", unit_name, re.IGNORECASE)
     if not m:
         return unit_name
