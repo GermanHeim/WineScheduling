@@ -720,6 +720,7 @@ def plot_solution(
     ax: plt.Axes,
     deadline_hours: float | None = None,
     publish_mode: bool = False,
+    no_title: bool = False,
 ) -> None:
     tasks = data["tasks"]
     if not tasks:
@@ -878,7 +879,8 @@ def plot_solution(
             title_parts.append("; ".join(econ_parts))
     if data.get("unused_units") is not None:
         title_parts.append(f"Unused tanks: {data['unused_units']}")
-    ax.set_title("  |  ".join(title_parts), fontsize=10, pad=18)
+    if not no_title:
+        ax.set_title("  |  ".join(title_parts), fontsize=10, pad=18)
 
 
 # Production bar chart
@@ -1052,6 +1054,11 @@ def main():
         help="Publication mode: save figures as EPS files.",
     )
     parser.add_argument(
+        "--no-title",
+        action="store_true",
+        help="Omit the title from the Gantt chart (useful in publication mode).",
+    )
+    parser.add_argument(
         "--stn",
         action="store_true",
         help="Also generate a State-Task Network graph from TOML data.",
@@ -1135,7 +1142,8 @@ def main():
         print("Note: --production-output is ignored unless --publish is set.")
 
     plot_solution(
-        data, ax_gantt, deadline_hours=deadline_hours, publish_mode=args.publish
+        data, ax_gantt, deadline_hours=deadline_hours, publish_mode=args.publish,
+        no_title=args.no_title,
     )
     if ax_prod is not None:
         plot_production(data, ax_prod, show_dsch=not args.hide_dsch)
