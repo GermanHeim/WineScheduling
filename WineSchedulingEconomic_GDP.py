@@ -77,6 +77,18 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     def task_line(task_name):
         return "".join(ch for ch in task_name if ch.isdigit())
 
+    def is_aging_stage(stage_name):
+        return stage_name.startswith("Age")
+
+    def unit_order_key(unit_name):
+        if "#" in unit_name:
+            _, suffix = unit_name.rsplit("#", 1)
+            try:
+                return int(suffix)
+            except ValueError:
+                return 10**9
+        return 1
+
     # Load parameters from TOML file
     with open(toml_file, "rb") as f:
         params = tomllib.load(f)
@@ -91,6 +103,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     lines_cfg = params["lines"]
     lines = list(lines_cfg.keys())
     line_product = {}
+    line_last_task = {}
+    line_lateness_task = {}
+    aging_task_by_product = {}
     tasks = []
     for line, cfg in lines_cfg.items():
         if "product" not in cfg:
@@ -102,11 +117,32 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         line_product[line] = cfg["product"]
         for step in cfg["steps"]:
             tasks.append(f"{step}{line}")
+        line_last_task[line] = f"{cfg['steps'][-1]}{line}"
+        # Lateness is evaluated on the last mandatory processing step
+        # Optional trailing Alm should not hide lateness when it is skipped
+        if len(cfg["steps"]) >= 2 and cfg["steps"][-1] == "Alm":
+            line_lateness_task[line] = f"{cfg['steps'][-2]}{line}"
+        else:
+            line_lateness_task[line] = line_last_task[line]
+        # Record the aging task regardless of its position in the step list
+        for step in cfg["steps"]:
+            if is_aging_stage(step):
+                aging_task_by_product[cfg["product"]] = f"{step}{line}"
+                break
 
     # Derived line groups (used for states, ICS/IPS and tc1)
     no_fl_lines = {l for l, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
     ist_lines = {l for l, cfg in lines_cfg.items() if "Alm" in cfg["steps"]}
     eco_lines = {l for l, cfg in lines_cfg.items() if cfg.get("ecobulk", False)}
+    # Lines where an aging step (AgeBar*, AgeJar*) precedes Cs
+    aging_before_cs_lines = {
+        l
+        for l, cfg in lines_cfg.items()
+        if "Cs" in cfg["steps"]
+        and any(
+            is_aging_stage(step) for step in cfg["steps"][: cfg["steps"].index("Cs")]
+        )
+    }
 
     model.i = pyo.Set(initialize=tasks)
     model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
@@ -138,6 +174,11 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     model.j = pyo.Set(initialize=unit_instances)
     model.JST = pyo.Set(initialize=storage_units)
+    model.JBAR = pyo.Set(initialize=unit_instances_by_base.get("barrique", []))
+    model.JJAR = pyo.Set(initialize=unit_instances_by_base.get("jar", []))
+
+    barrique_units_ordered = sorted(model.JBAR, key=unit_order_key)
+    jar_units_ordered = sorted(model.JJAR, key=unit_order_key)
 
     model.nJST = pyo.Param(initialize=len(model.JST))
     model.inv_nJST = pyo.Param(initialize=1 / len(model.JST))
@@ -192,6 +233,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         states.append(f"v{line}")
         if "Fl" in cfg["steps"]:
             states.append(f"vl{line}")
+        if line in aging_before_cs_lines:
+            states.append(f"va{line}")
         states.append(line_product[line])
     model.s = pyo.Set(initialize=states)
 
@@ -217,8 +260,10 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             IPS_data.append((task, f"vl{line}"))
             IPS_data.append((task, "dsch"))
         elif stage == "Cs":
-            # No-Fl lines: Cs consumes v{line} directly; others consume vl{line}
-            if line in no_fl_lines:
+            if line in aging_before_cs_lines:
+                # Aging precedes Cs, consume the post-aging intermediate va{line}
+                ICS_data.append((task, f"va{line}"))
+            elif line in no_fl_lines:
                 ICS_data.append((task, f"v{line}"))
             else:
                 ICS_data.append((task, f"vl{line}"))
@@ -243,7 +288,10 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         initialize=[f"v{l}" for l in lines]
         + [f"m{l}" for l in lines if "Pr" in lines_cfg[l]["steps"]]
     )
-    model.SNIS = pyo.Set(initialize=[f"vl{l}" for l in lines if l not in no_fl_lines])
+    model.SNIS = pyo.Set(
+        initialize=[f"vl{l}" for l in lines if l not in no_fl_lines]
+        + [f"va{l}" for l in aging_before_cs_lines]
+    )
 
     tc1_data = []
     tc2_data = []
@@ -327,6 +375,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     demand_data = {k: v["demand"] for k, v in params["products"].items()}
     model.D = pyo.Param(model.s, initialize=demand_data, default=0)
     model.line_product = line_product
+    model.line_last_task = line_last_task
+    model.line_lateness_task = line_lateness_task
+    model.aging_task_by_product = aging_task_by_product
     model.product_meta = params["products"]
     model.SMarket = pyo.Set(initialize=[p for p in model.SP if p in params["products"]])
 
@@ -334,12 +385,33 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     outsourcing_data = {
         k: v.get("costOutsourcing", 0.0) for k, v in params["products"].items()
     }
+    outsourcing_allowed_data = {
+        k: 1 if v.get("outsourced", True) else 0 for k, v in params["products"].items()
+    }
     model.Price = pyo.Param(model.s, initialize=price_data, default=0.0)
     model.CostOutsourcing = pyo.Param(model.s, initialize=outsourcing_data, default=0.0)
+    model.OutsourceAllowed = pyo.Param(
+        model.s, initialize=outsourcing_allowed_data, default=1
+    )
     model.Deadline = pyo.Param(
         initialize=global_cfg.get("deadline", pyo.value(model.H))
     )
     model.penaltyLate = pyo.Param(initialize=global_cfg.get("penaltyLate", 0.0))
+
+    aging_hours_by_product = {p: 0.0 for p in model.SMarket}
+    for line in lines:
+        product_key = line_product[line]
+        for stage in lines_cfg[line]["steps"]:
+            if is_aging_stage(stage):
+                aging_hours_by_product[product_key] = float(
+                    params["templates"][stage].get("alpha", 0.0)
+                )
+                break
+    model.AgingHoursByProduct = pyo.Param(
+        model.SMarket,
+        initialize=aging_hours_by_product,
+        default=0.0,
+    )
 
     raw_material_cost_cfg = params.get("raw_material_cost", {})
     model.RawMaterialCostPerL = pyo.Param(
@@ -437,9 +509,19 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.FinalProd = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.Outsource = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
-    model.Lateness = pyo.Var(domain=pyo.NonNegativeReals)
+    model.LatenessProd = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.JST_unused = pyo.Var(domain=pyo.NonNegativeReals)
     model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
+
+    model.task_jmax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMax)
+    model.task_jmin = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMin)
+    for task in model.i:
+        stage = task_stage(task)
+        template = params.get("templates", {}).get(stage, {})
+        if "max_units" in template:
+            model.task_jmax[task] = int(template["max_units"])
+        if "min_units" in template:
+            model.task_jmin[task] = int(template["min_units"])
 
     # Global lower bound for makespan (longest line path)
     min_makespan = max(
@@ -549,12 +631,16 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.g17 = pyo.Constraint(
         model.SMarket, rule=lambda m, s: m.FinalProd[s] + m.Outsource[s] >= m.D[s]
     )
+    model.g17_no_outsource = pyo.Constraint(
+        [s for s in model.SMarket if pyo.value(model.OutsourceAllowed[s]) == 0],
+        rule=lambda m, s: m.Outsource[s] == 0,
+    )
 
     # A01/A02/A01st/A02st: unit-count bounds using disjunct binary_indicator_var as W
     def A01_rule(model, i, n):
         return (
             sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            <= model.jMax * active_disjuncts[i, n].binary_indicator_var
+            <= model.task_jmax[i] * active_disjuncts[i, n].binary_indicator_var
         )
 
     model.A01 = pyo.Constraint(model.inst, model.n, rule=A01_rule)
@@ -562,7 +648,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     def A02_rule(model, i, n):
         return (
             sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            >= model.jMin * active_disjuncts[i, n].binary_indicator_var
+            >= model.task_jmin[i] * active_disjuncts[i, n].binary_indicator_var
         )
 
     model.A02 = pyo.Constraint(model.inst, model.n, rule=A02_rule)
@@ -690,6 +776,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         + sum(m.rhoISprod[i, s] * m.b[i, n] for i in m.i if (i, s) in m.IPS)
         == m.FinalProd[s],
     )
+
+    # If a product has a required aging stage, all in-house final production of that
+    # product must go through that aging task.
+    model.A18_aging_link = pyo.Constraint(
+        [p for p in model.SMarket if p in model.aging_task_by_product],
+        rule=lambda m, p: m.FinalProd[p]
+        <= sum(m.b[m.aging_task_by_product[p], n] for n in m.n),
+    )
     model.A21 = pyo.Constraint(
         model.ipst, [n_max], rule=lambda m, i, n: m.Tf[i, n] <= m.MS
     )
@@ -729,7 +823,18 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         else pyo.Constraint.Skip,
     )
 
-    model.LateDef = pyo.Constraint(expr=model.Lateness >= model.MS - model.Deadline)
+    model.LateDefByProduct = pyo.ConstraintList()
+    for line in lines:
+        product = line_product[line]
+        i_last = line_lateness_task[line]
+        for n in model.n:
+            model.LateDefByProduct.add(
+                model.Tf[i_last, n]
+                <= model.Deadline
+                + model.AgingHoursByProduct[product]
+                + model.LatenessProd[product]
+                + model.H * (1 - active_disjuncts[i_last, n].binary_indicator_var)
+            )
 
     # ========================================
     # DISJUNCTIONS (Combined Task-Unit, Eq. 2.1)
@@ -811,6 +916,66 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         rule=lambda m, j, n: sum(m.y[i, j, n] for i in m.i if (i, j) in m.ij) <= 1,
     )
 
+    # Symmetry-breaking for indexed vessel pools: use lower index before higher.
+    barrique_pairs = list(zip(barrique_units_ordered[:-1], barrique_units_ordered[1:]))
+    if barrique_pairs:
+        # Cumulative (cross-event) symmetry-breaking: barrique j_next cannot be
+        # first used before barrique j_prev across the whole horizon.
+        model.BarriqueSymmetryBreak = pyo.Constraint(
+            barrique_pairs,
+            model.n,
+            rule=lambda m, j_prev, j_next, n: sum(
+                m.y[i, j_next, n_prime]
+                for i in m.i
+                for n_prime in m.n
+                if (i, j_next) in m.ij and n_prime <= n
+            )
+            <= sum(
+                m.y[i, j_prev, n_prime]
+                for i in m.i
+                for n_prime in m.n
+                if (i, j_prev) in m.ij and n_prime <= n
+            ),
+        )
+
+    jar_pairs = list(zip(jar_units_ordered[:-1], jar_units_ordered[1:]))
+    if jar_pairs:
+        model.JarSymmetryBreak = pyo.Constraint(
+            jar_pairs,
+            model.n,
+            rule=lambda m, j_prev, j_next, n: sum(
+                m.y[i, j_next, n] for i in m.i if (i, j_next) in m.ij
+            )
+            <= sum(m.y[i, j_prev, n] for i in m.i if (i, j_prev) in m.ij),
+        )
+
+    # Barrique reuse constraints: if a barrique is reused at a later event,
+    # enforce a 1h minimum wait (cleaning) and a 24h maximum idle time
+    # (barrique cannot sit empty for more than 24h or it deteriorates).
+    barrique_reuse_index = [
+        (j, i_prev, n_prev, i_next, n_next)
+        for j in model.JBAR
+        for i_prev in model.i
+        for i_next in model.i
+        for n_prev in model.n
+        for n_next in model.n
+        if (i_prev, j) in model.ij and (i_next, j) in model.ij and n_prev < n_next
+    ]
+    model.BarriqueMinWait = pyo.Constraint(
+        barrique_reuse_index,
+        rule=lambda m, j, i_prev, n_prev, i_next, n_next: m.Ts[i_next, n_next]
+        >= m.Tf[i_prev, n_prev]
+        + 1.0
+        - m.H * (2 - m.y[i_prev, j, n_prev] - m.y[i_next, j, n_next]),
+    )
+    model.BarriqueMaxIdle = pyo.Constraint(
+        barrique_reuse_index,
+        rule=lambda m, j, i_prev, n_prev, i_next, n_next: m.Ts[i_next, n_next]
+        <= m.Tf[i_prev, n_prev]
+        + 24.0
+        + m.H * (2 - m.y[i_prev, j, n_prev] - m.y[i_next, j, n_next]),
+    )
+
     # ========================================
     # PRECEDENCE (Conditional Constraints, Eq. 2.2)
     # ========================================
@@ -882,7 +1047,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.OutsourcingCost = pyo.Expression(
         expr=sum(model.CostOutsourcing[s] * model.Outsource[s] for s in model.SMarket)
     )
-    model.LatenessCost = pyo.Expression(expr=model.penaltyLate * model.Lateness)
+    model.Lateness = pyo.Expression(
+        expr=sum(model.LatenessProd[s] for s in model.SMarket)
+    )
+    model.LatenessCost = pyo.Expression(
+        expr=model.penaltyLate * sum(model.LatenessProd[s] for s in model.SMarket)
+    )
     model.RawMaterialCost = pyo.Expression(
         expr=sum(
             model.RawMaterialCostPerL[s] * (-model.rhoIScons[i, s]) * model.b[i, n]

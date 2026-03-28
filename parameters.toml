@@ -5,10 +5,10 @@
 # 1. Global Settings - Time and Penalties
 [global]
     # The Horizon (total available hours in the model)
-    H = 4320  # 180 days
+    H = 18500  # days?
 
     # Number of event points
-    n_max = 7
+    n_max = 6
 
     # Target Deadline for the schedule and lateness penalty
     deadline = 1560  # 65 days
@@ -40,9 +40,9 @@
     [products.Red1]
         name = "Cabernet Reserva"
         category = "Red"
-        demand = 2000
-        price = 18.50
-        costOutsourcing = 22.0
+        demand = 4000
+        price = 24.50
+        costOutsourcing = 38.0
         outsourced = false
 
     [products.White1]
@@ -50,7 +50,7 @@
         category = "White"
         demand = 9750
         price = 8.00
-        costOutsourcing = 12.75
+        costOutsourcing = 15.5
 
     [products.Rose1]
         name = "Rose de Verano"
@@ -70,8 +70,8 @@
         name = "Chardonnay Roble"
         category = "White"
         demand = 10000
-        price = 10.00
-        costOutsourcing = 13.0
+        price = 16.00
+        costOutsourcing = 26.0
         outsourced = false
 
     [products.Rose2]
@@ -107,7 +107,7 @@
         category = "Red"
         demand = 7500
         price = 26.50
-        costOutsourcing = 32.25
+        costOutsourcing = 99999999.25
         outsourced = false
 
     [products.White4]
@@ -138,7 +138,7 @@
 # This is equivalent to adding an explicit constraint,
 # but implemented as a variable bound, which is tighter and better for MIP performance.
 [product_ub]
-    Red1 = 4000
+    Red1 = 7000
     White1 = 12000
     Rose1 = 5000
     Red2 = 6000
@@ -165,7 +165,7 @@
 #          false -> no ecobulk constraint
 [lines.1]
 product = "Red1"
-steps = ["Fa", "Fl", "Cs"]
+steps = ["Fa", "Fl", "AgeBarShort", "Cs"]
 
 [lines.2]
 product = "White1"
@@ -179,12 +179,11 @@ ecobulk = true
 
 [lines.4]
 product = "Red2"
-steps = ["Fa", "Fl", "Cs"]
+steps = ["Fa", "Fl", "AgeJarShort", "Cs"]
 
 [lines.5]
 product = "White2"
-steps = ["Pr", "Fa", "Fl", "Cs"]
-ecobulk = true
+steps = ["Pr", "Fa", "Fl", "AgeBarShort", "Cs"]
 
 [lines.6]
 product = "Rose2"
@@ -196,15 +195,15 @@ steps = ["Fa", "Fl", "Cs"]
 
 [lines.8]
 product = "White3"
-steps = ["Pr", "Fa", "Cs"]
+steps = ["Pr", "Fa", "AgeJarMedium", "Cs"]
 
 [lines.9]
 product = "Rose3"
-steps = ["Pr", "Fa", "Cs"]
+steps = ["Pr", "Fa", "AgeJarShort", "Cs"]
 
 [lines.10]
 product = "Red4"
-steps = ["Fa", "Fl", "Cs"]
+steps = ["Fa", "Fl", "AgeBarLong", "Cs"]
 
 [lines.11]
 product = "White4"
@@ -242,6 +241,34 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 [templates.Alm]
     beta = 0.0
     compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700", "iso5000", "iso10000"]
+
+# Aging in barriques (4 months)
+[templates.AgeBarShort]
+    alpha = 2880.0
+    beta = 0.0
+    compatible_units = ["barrique"]
+    max_units = 100
+
+# Aging in barriques (18 months)
+[templates.AgeBarLong]
+    alpha = 12960.0
+    beta = 0.0
+    compatible_units = ["barrique"]
+    max_units = 100
+
+# Aging in jars (4 months)
+[templates.AgeJarShort]
+    alpha = 2880.0
+    beta = 0.0
+    compatible_units = ["jar"]
+    max_units = 40
+
+# Aging in jars (6 months)
+[templates.AgeJarMedium]
+    alpha = 4320.0
+    beta = 0.0
+    compatible_units = ["jar"]
+    max_units = 40
 
 # 7. State Consumption/Production Coefficients (rho)
 #
@@ -356,7 +383,7 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     rhoISprod = {vl11 = 0.96}
 
 [rho.Cs1]
-    rhoIScons = {vl1 = -1.0}
+    rhoIScons = {va1 = -1.0}
     rhoISprod = {Red1 = 1.0}
 
 [rho.Cs2]
@@ -368,11 +395,11 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     rhoISprod = {Rose1 = 1.0}
 
 [rho.Cs4]
-    rhoIScons = {vl4 = -1.0}
+    rhoIScons = {va4 = -1.0}
     rhoISprod = {Red2 = 1.0}
 
 [rho.Cs5]
-    rhoIScons = {vl5 = -1.0}
+    rhoIScons = {va5 = -1.0}
     rhoISprod = {White2 = 1.0}
 
 [rho.Cs6]
@@ -384,15 +411,15 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     rhoISprod = {Red3 = 1.0}
 
 [rho.Cs8]
-    rhoIScons = {v8 = -1.0}
+    rhoIScons = {va8 = -1.0}
     rhoISprod = {White3 = 1.0}
 
 [rho.Cs9]
-    rhoIScons = {v9 = -1.0}
+    rhoIScons = {va9 = -1.0}
     rhoISprod = {Rose3 = 1.0}
 
 [rho.Cs10]
-    rhoIScons = {vl10 = -1.0}
+    rhoIScons = {va10 = -1.0}
     rhoISprod = {Red4 = 1.0}
 
 [rho.Cs11]
@@ -422,6 +449,30 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 [rho.Alm6]
     rhoIScons = {Rose2 = -1.0}
     rhoISprod = {Rose2 = 1.0}
+
+[rho.AgeBarShort1]
+    rhoIScons = {vl1 = -1.0}
+    rhoISprod = {va1 = 1.0}
+
+[rho.AgeJarShort4]
+    rhoIScons = {vl4 = -1.0}
+    rhoISprod = {va4 = 1.0}
+
+[rho.AgeBarShort5]
+    rhoIScons = {vl5 = -1.0}
+    rhoISprod = {va5 = 1.0}
+
+[rho.AgeJarMedium8]
+    rhoIScons = {v8 = -1.0}
+    rhoISprod = {va8 = 1.0}
+
+[rho.AgeJarShort9]
+    rhoIScons = {v9 = -1.0}
+    rhoISprod = {va9 = 1.0}
+
+[rho.AgeBarLong10]
+    rhoIScons = {vl10 = -1.0}
+    rhoISprod = {va10 = 1.0}
 
 # 8. Units
 #
@@ -475,3 +526,11 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 [units.iso10000]
     quantity = 1
     task_bounds = {Cs = [2000, 10000], Alm = [9500, 10000]}
+
+[units.barrique]
+    quantity = 100
+    task_bounds = {AgeBarShort = [225, 250], AgeBarLong = [225, 250]}
+
+[units.jar]
+    quantity = 40
+    task_bounds = {AgeJarShort = [300, 350], AgeJarMedium = [300, 350]}
