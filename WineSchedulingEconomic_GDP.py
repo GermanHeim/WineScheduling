@@ -147,7 +147,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.i = pyo.Set(initialize=tasks)
     model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
     model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])
-    model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Cs")])
+    model.ipst = pyo.Set(initialize=list(line_lateness_task.values()))
     model.inpst = pyo.Set(
         initialize=[t for t in tasks if t.startswith(("Pr", "Fa", "Fl"))]
     )
@@ -271,6 +271,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         elif stage == "Alm":
             ICS_data.append((task, line_product[line]))
             IPS_data.append((task, line_product[line]))
+        elif is_aging_stage(stage):
+            if line in aging_before_cs_lines:
+                # Aging before Cs, consume fermentation intermediate, produce va{line}
+                if line in no_fl_lines:
+                    ICS_data.append((task, f"v{line}"))
+                else:
+                    ICS_data.append((task, f"vl{line}"))
+                IPS_data.append((task, f"va{line}"))
+            else:
+                ICS_data.append((task, line_product[line]))
+                IPS_data.append((task, line_product[line]))
     model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
     model.ICS = pyo.Set(initialize=ICS_data, dimen=2)
 
