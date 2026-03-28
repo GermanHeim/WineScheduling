@@ -838,13 +838,20 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     for line in lines:
         product = line_product[line]
         i_last = line_lateness_task[line]
+        # Tightest Big-M is achieved when the task is inactive Tf <= H is always
+        # satisfied, so M only needs to cover H - Deadline - AgingHours
+        M_late = (
+            pyo.value(model.H)
+            - pyo.value(model.Deadline)
+            - pyo.value(model.AgingHoursByProduct[product])  # type: ignore[index]
+        )
         for n in model.n:
             model.LateDefByProduct.add(
                 model.Tf[i_last, n]
                 <= model.Deadline
                 + model.AgingHoursByProduct[product]
                 + model.LatenessProd[product]
-                + model.H * (1 - active_disjuncts[i_last, n].binary_indicator_var)
+                + M_late * (1 - active_disjuncts[i_last, n].binary_indicator_var)
             )
 
     # ========================================
