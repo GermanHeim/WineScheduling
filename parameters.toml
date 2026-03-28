@@ -43,6 +43,7 @@
         demand = 2000
         price = 18.50
         costOutsourcing = 22.0
+        outsourced = false
 
     [products.White1]
         name = "Sauvignon Blanc"
@@ -71,6 +72,7 @@
         demand = 10000
         price = 10.00
         costOutsourcing = 13.0
+        outsourced = false
 
     [products.Rose2]
         name = "Rose Andino"
@@ -106,6 +108,7 @@
         demand = 7500
         price = 26.50
         costOutsourcing = 32.25
+        outsourced = false
 
     [products.White4]
         name = "Torrontes Aromatico"
