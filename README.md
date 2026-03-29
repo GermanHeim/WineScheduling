@@ -22,7 +22,8 @@
     - [3. Storage Persistence via Logical Implications (Eq. 2.3)](#3-storage-persistence-via-logical-implications-eq-23)
     - [4. Algebraic Constraints (Global Coupling)](#4-algebraic-constraints-global-coupling)
     - [5. Variable Definitions (GDP Adaptations)](#5-variable-definitions-gdp-adaptations)
-- [Economic Optimization](#economic-optimization)
+  - [Economic Optimization](#economic-optimization)
+    - [Additional Sets](#additional-sets)
     - [Additional Parameters](#additional-parameters)
     - [Additional Variables](#additional-variables)
     - [Economic Constraints](#economic-constraints)
@@ -434,16 +435,24 @@ $$ \sum_{j} y_{i,j,n} \le j_{max} \cdot W_{i,n} $$
 - **$W_{i,n}$:** The GDP disjunct's `binary_indicator_var`, no separate binary variable is declared. This single binary serves both the disjunction structure and algebraic constraints (A01, A06, precedence, persistence, etc.), and activates terminal storage horizon sync inside the final storage disjunct.
 - **$y_{i,j,n}$:** Unit assignment binary; retained for global constraints (A03, batch limits).
 
-# Economic Optimization
+## Economic Optimization
 
-This section documents the economic variant implemented in `WineSchedulingEconomic_GDP.py` using `parameters.toml`. The scheduling structure is the same GDP formulation described above, with added market variables, raw-material costs, and a profit-maximizing objective.
+This section documents the economic variant implemented in `WineSchedulingEconomic_GDP.py` using `parameters.toml`. The scheduling structure is the same GDP formulation described above, with added market variables, raw-material costs, aging logic, and a profit-maximizing objective.
+
+### Additional Sets
+
+- $S^{Market} \subset S^P$: Final product states sold on the market
+- $S^R \subset S$: Shared raw-material pool states (e.g. $s_{red}$, $s_{white\_rose}$)
+- $S^{Age} \subset S$: Post-aging, pre-cold-stabilization intermediate states ($va_l$ for lines where aging precedes cold stabilization). Treated as NIS - cold stabilization must begin immediately after aging finishes.
+- $I^{Age} \subseteq I$: Aging tasks ($AgeBar^*$, $AgeJar^*$). Each product $s$ has at most one aging task $i^{Age}_s$.
 
 ### Additional Parameters
 
 - $Price_s$: selling price of product state $s$
 - $C^{out}_s$: outsourcing cost of product state $s$
-- $Deadline$: target completion time
-- $c^{late}$: lateness penalty coefficient
+- $Deadline$: target completion time for all production lines
+- $AgingHours_s$: fixed processing duration of the aging step for product $s$ (0 if the product has no aging step)
+- $c^{late}$: lateness penalty coefficient (cost per hour per product)
 - $c^{empty}$: penalty on unused storage tanks
 - $c^{air}$: penalty on free storage space
 - $C_s^{raw}$: raw-material cost per liter for shared raw pools $s \in S^R$
@@ -452,7 +461,7 @@ This section documents the economic variant implemented in `WineSchedulingEconom
 ### Additional Variables
 
 - $Outsource_s \ge 0$: outsourced quantity of product $s$
-- $Lateness \ge 0$: tardiness beyond deadline
+- $LatenessProd_s \ge 0$: delay of product $s$ beyond its effective deadline
 - $JST_{unused} \ge 0$: number of storage tanks left unused
 - $Freespace_j \ge 0$: remaining free volume in storage unit $j$
 - $MS \ge 0$: makespan (retained from scheduling model)
@@ -464,17 +473,37 @@ Demand can be met by internal production plus outsourcing:
 
 $$ FinalProd_s + Outsource_s \ge D_s \quad \forall s \in S^{Market} $$
 
-Final produced quantity is linked to last-event inventory and production:
+Final produced quantity is linked to last-event inventory and production (A18):
 
-$$ ST_{s,N} + \sum_{i:(i,s)\in IPS} \rho^{prod}_{i,s} b_{i,N} = FinalProd_s \quad \forall s \in S^P $$
+$$ ST_{s,N} + \sum_{i:(i,s)\in IPS} \rho^{prod}_{i,s} \, b_{i,N} = FinalProd_s \quad \forall s \in S^P $$
 
-Lateness definition:
+**Aging throughput link (`A18\_aging\_link`):**
+For products that have an aging step, all in-house production must pass through it. Because the aging task is the sole producer of $va_s$ (for aging-first lines) or of the final product (for aging-last lines), the total aging batch across all events upper-bounds $FinalProd_s$:
 
-$$ Lateness \ge MS - Deadline $$
+$$ FinalProd_s \le \sum_{n \in N} b_{i^{Age}_s,\, n} \quad \forall s \in S^{Market} : i^{Age}_s \text{ exists} $$
+
+**Per-product lateness (`LateDefByProduct`):**
+Lateness is the amount by which the finish time of the last mandatory task $i^{last}_l$ exceeds the effective deadline:
+
+$$LatenessProd_{s_l} = \max\!\bigl(0,\; Tf_{i^{last}_l} - Deadline - AgingHours_{s_l}\bigr)$$
+
+$Deadline$ is the target delivery time common to all lines. For lines with aging, $AgingHours_s$ extends this target to account for the fixed aging duration, so that a wine is not penalised simply for needing to age. Lateness only accumulates when the final step finishes *beyond* $Deadline + AgingHours_s$, not immediately after aging ends. Implemented as:
+
+$$ Tf_{i^{last}_l,\, n} \le Deadline + AgingHours_{s_l} + LatenessProd_{s_l} + M^{late}_{s_l}\,(1 - W_{i^{last}_l,\, n}) \quad \forall l,\, n \in N $$
+
+The tightest valid value is derived by requiring that when $W = 0$ the constraint always holds. Since $Tf \le H$ by the variable bound, the right-hand side needs only to reach $H$:
+
+$$Deadline + AgingHours_{s_l} + LatenessProd_{s_l} + M^{late}_{s_l} \ge H$$
+
+In the worst case $LatenessProd_{s_l} = 0$, giving the per-product tight Big-M:
+
+$$M^{late}_{s_l} = H - Deadline - AgingHours_{s_l}$$
+
+This is strictly tighter than $H$ for every product (using $Deadline \ge 0$ and $AgingHours_{s_l} \ge 0$), and roughly halves the coefficient for long-aged wines.
 
 A storage utilization index is defined from storage assignment at the final event point. With storage persistence, a tank that is ever activated remains active through $N$, so final-event activity is equivalent to "used at least once":
 
-$$ JST_unused = n_{JST} - \sum_{j \in JST}\sum_{\substack{i \in I^{st}:\\(i,j)\in IJ}} y_{i,j,N} $$
+$$ JST_{unused} = n_{JST} - \sum_{j \in JST}\sum_{\substack{i \in I^{st}:\\(i,j)\in IJ}} y_{i,j,N} $$
 
 This quantity represents the number of storage tanks that are inactive at the final event.
 
@@ -496,9 +525,9 @@ Outsourcing cost term:
 
 $$ OutsourcingCost = \sum_{s\in S^{Market}} C^{out}_s \cdot Outsource_s $$
 
-Lateness cost term:
+Lateness cost term (summed across all products):
 
-$$ LatenessCost = c^{late} \cdot Lateness $$
+$$ LatenessCost = c^{late} \cdot \sum_{s \in S^{Market}} LatenessProd_s $$
 
 Raw material cost term:
 
