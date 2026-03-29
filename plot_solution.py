@@ -1410,6 +1410,7 @@ def main():
         deadline_hours=deadline_hours,
         publish_mode=args.publish,
         no_title=args.no_title,
+        no_break=args.no_break,
     )
     if ax_prod is not None:
         plot_production(data, ax_prod, show_dsch=not args.hide_dsch)
