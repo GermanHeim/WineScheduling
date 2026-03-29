@@ -17,11 +17,13 @@ import argparse
 import re
 import sys
 import tomllib
+from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 from matplotlib.artist import Artist
+from matplotlib.gridspec import GridSpecFromSubplotSpec
 from matplotlib.lines import Line2D
 from matplotlib.ticker import MultipleLocator
 
@@ -29,6 +31,7 @@ TASK_COLORS: dict[str, str] = {
     "Pr": "#C06C84",  # pressing
     "Fa": "#E07B54",  # alcoholic fermentation
     "Fl": "#5B8DB8",  # lactic fermentation
+    "Age": "#C8A97E",  # aging (barrel / jar)
     "Cs": "#6BBF7A",  # cold stabilization
     "Alm": "#9B7EC8",  # storage
 }
@@ -348,12 +351,74 @@ def format_unit_label(unit_name: str, publish_mode: bool) -> str:
         return UNIT_PUBLISH_NAMES[unit_name]
 
     m = re.match(r"^(inox|subte|iso)(\d+)$", unit_name, re.IGNORECASE)
-    if not m:
-        return unit_name
+    if m:
+        family = m.group(1).lower().capitalize()
+        capacity = m.group(2)
+        return f"{family} {capacity}"
 
-    family = m.group(1).lower().capitalize()
-    capacity = m.group(2)
-    return f"{family} {capacity}"
+    m = re.match(r"^(.+)#(\d+)$", unit_name)
+    if m:
+        family = m.group(1).capitalize()
+        number = m.group(2)
+        return f"{family} #{number}"
+
+    return unit_name
+
+
+def parse_unit_family(unit_name: str) -> tuple[str, int | None]:
+    """Return (family, number) for units like 'jar#5', else (unit_name, None)."""
+    m = re.match(r"^(.+)#(\d+)$", unit_name)
+    if m:
+        return m.group(1), int(m.group(2))
+    return unit_name, None
+
+
+def build_collapsed_unit_groups(
+    tasks: list[dict],
+) -> tuple[dict[str, str], dict[str, tuple[str, str, int]]]:
+    """
+    Find units with the same family name (e.g. 'jar', 'barrique') and identical
+    timeline (same set of (start, end) intervals across all tasks) and group them.
+
+    Returns:
+        unit_to_rep  : maps each unit name to the group representative unit name.
+        rep_to_info  : maps representative -> (first_unit, last_unit, count).
+    """
+    unit_intervals: dict[str, list[tuple[float, float]]] = {}
+    for t in tasks:
+        for u in t["units"]:
+            name = u["unit"]
+            interval = (t["start"], t["end"])
+            if name not in unit_intervals:
+                unit_intervals[name] = []
+            if interval not in unit_intervals[name]:
+                unit_intervals[name].append(interval)
+
+    family_groups: dict[str, dict[frozenset, list[tuple[int, str]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for name, intervals in unit_intervals.items():
+        family, number = parse_unit_family(name)
+        if number is not None:
+            key = frozenset(intervals)
+            family_groups[family][key].append((number, name))
+
+    unit_to_rep: dict[str, str] = {}
+    rep_to_info: dict[str, tuple[str, str, int]] = {}
+
+    for _family, by_intervals in family_groups.items():
+        for _key, members in by_intervals.items():
+            if len(members) < 2:
+                continue
+            members_sorted = sorted(members, key=lambda x: x[0])
+            rep = members_sorted[0][1]
+            first_unit = members_sorted[0][1]
+            last_unit = members_sorted[-1][1]
+            rep_to_info[rep] = (first_unit, last_unit, len(members))
+            for _num, name in members:
+                unit_to_rep[name] = rep
+
+    return unit_to_rep, rep_to_info
 
 
 def parse_stn_data(toml_file: str) -> dict:
@@ -715,12 +780,74 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
     ax.legend(handles=legend_items, loc="lower left", fontsize=7, framealpha=0.9)
 
 
+def compute_xaxis_breaks(
+    tasks: list[dict], xmax: float, min_gap_fraction: float = 0.08
+) -> list[tuple[float, float]]:
+    """
+    Return (break_start, break_end) intervals where no non-aging task is active
+    and the gap exceeds min_gap_fraction * xmax (minimum 500 h).
+    Only tasks whose name starts with 'Age' are treated as aging tasks.
+    """
+    min_gap = max(500.0, xmax * min_gap_fraction)
+
+    events: list[tuple[float, int]] = []
+    for t in tasks:
+        m = re.match(r"[A-Za-z]+", t["task"])
+        prefix = m.group() if m else ""
+        if not prefix.startswith("Age"):
+            events.append((t["start"], +1))
+            events.append((t["end"], -1))
+
+    if not events:
+        return []
+
+    events.sort()
+    active = 0
+    inactive_start: float | None = None
+    breaks: list[tuple[float, float]] = []
+
+    for time, delta in events:
+        prev = active
+        active += delta
+        if prev > 0 and active == 0:
+            inactive_start = time
+        elif prev == 0 and active > 0 and inactive_start is not None:
+            gap = time - inactive_start
+            if gap >= min_gap:
+                pad = min(gap * 0.03, 48.0)
+                breaks.append((inactive_start + pad, time - pad))
+            inactive_start = None
+
+    return breaks
+
+
+def _add_break_marks(ax_left: plt.Axes, ax_right: plt.Axes) -> None:
+    """
+    Draw diagonal break marks at the boundary between two adjacent axes.
+    """
+    d = 0.4
+    marker = [(-1, -d), (1, d)]
+    kw = dict(
+        marker=marker,
+        markersize=9,
+        linestyle="none",
+        color="k",
+        mec="k",
+        mew=1.2,
+        clip_on=False,
+        zorder=10,
+    )
+    ax_left.plot([1, 1], [0, 1], transform=ax_left.transAxes, **kw)  # type: ignore[arg-type]
+    ax_right.plot([0, 0], [0, 1], transform=ax_right.transAxes, **kw)  # type: ignore[arg-type]
+
+
 def plot_solution(
     data: dict,
     ax: plt.Axes,
     deadline_hours: float | None = None,
     publish_mode: bool = False,
     no_title: bool = False,
+    no_break: bool = False,
 ) -> None:
     tasks = data["tasks"]
     if not tasks:
@@ -741,96 +868,221 @@ def plot_solution(
             if u["unit"] not in used_units:
                 used_units.append(u["unit"])
 
-    # Order them according to UNIT_ORDER
+    unit_to_rep, rep_to_info = build_collapsed_unit_groups(tasks)
+
     ordered_units = [u for u in UNIT_ORDER if u in used_units]
     ordered_units += [u for u in used_units if u not in ordered_units]
+
+    seen_reps: set[str] = set()
+    collapsed_ordered: list[str] = []
+    for u in ordered_units:
+        rep = unit_to_rep.get(u, u)
+        if rep not in seen_reps:
+            seen_reps.add(rep)
+            collapsed_ordered.append(rep)
+    ordered_units = collapsed_ordered
 
     unit_index = {u: i for i, u in enumerate(ordered_units)}
     bar_height = 0.6
 
-    # Determine x-axis limit before drawing to skip out-of-range labels
-    makespan = data.get("makespan") or max(t["end"] for t in tasks)
-    xmax = makespan * 1.01
+    xmax = max(t["end"] for t in tasks) * 1.01
 
-    for t in tasks:
-        match = re.match(r"[A-Za-z]+", t["task"])
-        prefix = match.group() if match else ""
-        color = TASK_COLORS.get(prefix, "#AAAAAA")
-        duration = t["end"] - t["start"]
+    # Build segments from x-axis breaks
+    breaks = [] if no_break else compute_xaxis_breaks(tasks, xmax)
+    fig = ax.get_figure()
+    assert fig is not None
 
-        # Clip bar to xmax so it doesn't expand the axes
-        visible_duration = min(t["end"], xmax) - t["start"]
-        if visible_duration <= 0:
-            continue
+    if breaks:
+        ss = ax.get_subplotspec()
+        assert ss is not None
+        ax.remove()
 
-        for u in t["units"]:
-            yi = unit_index.get(u["unit"])
-            if yi is None:
+        segments: list[tuple[float, float]] = []
+        prev = 0.0
+        for b_start, b_end in breaks:
+            segments.append((prev, b_start))
+            prev = b_end
+        segments.append((prev, xmax))
+
+        widths = [max(s[1] - s[0], 1.0) for s in segments]
+        gss = GridSpecFromSubplotSpec(
+            1,
+            len(segments),
+            subplot_spec=ss,
+            wspace=0.04,
+            width_ratios=widths,
+        )
+        axes = [fig.add_subplot(gss[0, i]) for i in range(len(segments))]
+    else:
+        axes = [ax]
+        segments = [(0.0, xmax)]
+
+    best_seg: dict[tuple[str, str], int] = {}
+    best_seg_width: dict[tuple[str, str], float] = {}
+    for seg_idx, (seg_start, seg_end) in enumerate(segments):
+        for t in tasks:
+            clip_w = min(t["end"], seg_end) - max(t["start"], seg_start)
+            if clip_w <= 0:
                 continue
-            ax.barh(
-                yi,
-                visible_duration,
-                left=t["start"],
-                height=bar_height,
-                color=color,
-                edgecolor="white",
-                linewidth=0.6,
-                align="center",
-            )
-            # For the lable, show task name + batch
-            # but only if the bar centre is within xmax
-            label_x = t["start"] + duration / 2
-            if duration > 30 and label_x <= xmax:
-                display_task = format_task_label(t["task"], publish_mode)
-                ax.text(
-                    label_x,
+            for u in t["units"]:
+                display_unit = unit_to_rep.get(u["unit"], u["unit"])
+                key = (t["task"], display_unit)
+                if clip_w > best_seg_width.get(key, 0):
+                    best_seg[key] = seg_idx
+                    best_seg_width[key] = clip_w
+
+    for seg_idx, (seg_ax, (seg_start, seg_end)) in enumerate(zip(axes, segments)):
+        for t in tasks:
+            m = re.match(r"[A-Za-z]+", t["task"])
+            prefix = m.group() if m else ""
+            if prefix in TASK_COLORS:
+                color = TASK_COLORS[prefix]
+            elif prefix.startswith("Age"):
+                color = TASK_COLORS["Age"]
+            else:
+                color = "#AAAAAA"
+
+            duration = t["end"] - t["start"]
+            clip_start = max(t["start"], seg_start)
+            clip_end = min(t["end"], seg_end)
+            if clip_end <= clip_start:
+                continue
+
+            drawn_display_units: set[str] = set()
+            for u in t["units"]:
+                display_unit = unit_to_rep.get(u["unit"], u["unit"])
+                yi = unit_index.get(display_unit)
+                if yi is None or display_unit in drawn_display_units:
+                    continue
+                drawn_display_units.add(display_unit)
+
+                seg_ax.barh(
                     yi,
-                    f"{display_task}\n{u['batch']:.0f} L",
-                    ha="center",
-                    va="center",
-                    fontsize=6.5,
-                    color="white",
-                    fontweight="bold",
-                    clip_on=True,
+                    clip_end - clip_start,
+                    left=clip_start,
+                    height=bar_height,
+                    color=color,
+                    edgecolor="white",
+                    linewidth=0.6,
+                    align="center",
                 )
 
-    ax.set_yticks(range(len(ordered_units)))
-    display_units = [format_unit_label(u, publish_mode) for u in ordered_units]
-    ax.set_yticklabels(display_units, fontsize=9)
-    ax.set_ylim(-0.5, len(ordered_units) - 0.5)
-    ax.invert_yaxis()
-    ax.set_ylabel("Unit", fontsize=10)
-    ax.set_axisbelow(True)
+                # Label only in the segment with the largest visible clip
+                label_key = (t["task"], display_unit)
+                clipped_width = clip_end - clip_start
+                if (
+                    duration > 30
+                    and clipped_width > 30
+                    and best_seg.get(label_key) == seg_idx
+                ):
+                    label_x = t["start"] + duration / 2
+                    if not (seg_start <= label_x <= seg_end):
+                        label_x = (clip_start + clip_end) / 2
+                    display_task = format_task_label(t["task"], publish_mode)
+                    batch_str = (
+                        f"{t['batch']:.0f} L"
+                        if display_unit in rep_to_info
+                        else f"{u['batch']:.0f} L"
+                    )
+                    seg_ax.text(
+                        label_x,
+                        yi,
+                        f"{display_task}\n{batch_str}",
+                        ha="center",
+                        va="center",
+                        fontsize=6.5,
+                        color="white",
+                        fontweight="bold",
+                        clip_on=True,
+                    )
 
-    # Secondary x-axis in days
-    ax2 = ax.twiny()
-    ax2.set_xlabel("Time (days)", fontsize=10)
-    ax2.xaxis.set_major_locator(MultipleLocator(7))
+    def make_ytick_label(u: str) -> str:
+        if u in rep_to_info:
+            first_unit, last_unit, count = rep_to_info[u]
+            if publish_mode:
+                first_label = format_unit_label(first_unit, publish_mode)
+                last_label = format_unit_label(last_unit, publish_mode)
+            else:
+                first_label, last_label = first_unit, last_unit
+            return f"{first_label} - {last_label} (x{count})"
+        return format_unit_label(u, publish_mode)
 
-    # X-axis limits
-    ax.set_xlim(0, xmax)
-    ax.set_xlabel("Time (hours)", fontsize=10)
-    ax.xaxis.set_minor_locator(MultipleLocator(24))
-    ax.xaxis.set_major_locator(MultipleLocator(168))
-    ax2.set_xlim(0, xmax / 24)
+    n_units = len(ordered_units)
+    display_units = [make_ytick_label(u) for u in ordered_units]
 
-    ax.grid(axis="x", which="minor", linestyle=":", linewidth=0.4, alpha=0.5)
-    ax.grid(axis="x", which="major", linestyle="--", linewidth=0.6, alpha=0.5)
+    for i, seg_ax in enumerate(axes):
+        seg_ax.set_yticks(range(n_units))
+        seg_ax.set_ylim(-0.5, n_units - 0.5)
+        seg_ax.invert_yaxis()
+        seg_ax.set_axisbelow(True)
+        if i == 0:
+            seg_ax.set_yticklabels(display_units, fontsize=9)
+            seg_ax.set_ylabel("Unit", fontsize=10)
+        else:
+            seg_ax.set_yticklabels([])
+            seg_ax.tick_params(axis="y", length=0)
+            seg_ax.spines["left"].set_visible(False)
+
+    def pick_hour_interval(width_h: float) -> tuple[int, int]:
+        """Return (major, minor) hour tick intervals for a segment of given width."""
+        for major, minor in [(24, 6), (168, 24), (504, 168), (1008, 168), (2016, 336)]:
+            if width_h / major <= 15:
+                return major, minor
+        return 4032, 672
+
+    def pick_day_interval(width_d: float) -> int:
+        for interval in [7, 14, 28, 56, 91, 182]:
+            if width_d / interval <= 15:
+                return interval
+        return 365
+
+    for i, (seg_ax, (seg_start, seg_end)) in enumerate(zip(axes, segments)):
+        seg_ax.set_xlim(seg_start, seg_end)
+        major_h, minor_h = pick_hour_interval(seg_end - seg_start)
+        seg_ax.xaxis.set_minor_locator(MultipleLocator(minor_h))
+        seg_ax.xaxis.set_major_locator(MultipleLocator(major_h))
+        seg_ax.grid(axis="x", which="minor", linestyle=":", linewidth=0.4, alpha=0.5)
+        seg_ax.grid(axis="x", which="major", linestyle="--", linewidth=0.6, alpha=0.5)
+        if i < len(axes) - 1:
+            seg_ax.spines["right"].set_visible(False)
+        if i == 0:
+            seg_ax.set_xlabel("Time (hours)", fontsize=10)
+        else:
+            seg_ax.set_xlabel("")
+
+        ax2 = seg_ax.twiny()
+        ax2.set_xlim(seg_start / 24, seg_end / 24)
+        major_d = pick_day_interval((seg_end - seg_start) / 24)
+        ax2.xaxis.set_major_locator(MultipleLocator(major_d))
+        if i < len(axes) - 1:
+            ax2.spines["right"].set_visible(False)
+        if i > 0:
+            ax2.spines["left"].set_visible(False)
+        if i == 0:
+            ax2.set_xlabel("Time (days)", fontsize=10)
+        else:
+            ax2.set_xlabel("")
 
     if deadline_hours is not None and deadline_hours >= 0:
-        ax.axvline(
-            deadline_hours,
-            color="#B03A2E",
-            linestyle="--",
-            linewidth=1.4,
-            alpha=0.9,
-            zorder=0,
-        )
+        for seg_ax, (seg_start, seg_end) in zip(axes, segments):
+            if seg_start <= deadline_hours <= seg_end:
+                seg_ax.axvline(
+                    deadline_hours,
+                    color="#B03A2E",
+                    linestyle="--",
+                    linewidth=1.4,
+                    alpha=0.9,
+                    zorder=0,
+                )
+
+    for i in range(len(axes) - 1):
+        _add_break_marks(axes[i], axes[i + 1])
 
     legend_defs = [
         ("Pr", "Pressing", TASK_COLORS["Pr"]),
         ("Fa", "Alcoholic fermentation", TASK_COLORS["Fa"]),
         ("Fl", "Lactic fermentation", TASK_COLORS["Fl"]),
+        ("Age", "Aging", TASK_COLORS["Age"]),
         ("Cs", "Cold stabilization", TASK_COLORS["Cs"]),
         ("Alm", "Storage", TASK_COLORS["Alm"]),
     ]
@@ -853,7 +1105,9 @@ def plot_solution(
                 label=f"Deadline ({deadline_hours:.0f} h)",
             )
         )
-    ax.legend(handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85)
+    axes[-1].legend(
+        handles=legend_handles, loc="upper right", fontsize=8, framealpha=0.85
+    )
 
     title_parts = []
     if data.get("model_name"):
@@ -879,8 +1133,12 @@ def plot_solution(
             title_parts.append("; ".join(econ_parts))
     if data.get("unused_units") is not None:
         title_parts.append(f"Unused tanks: {data['unused_units']}")
-    if not no_title:
-        ax.set_title("  |  ".join(title_parts), fontsize=10, pad=18)
+    if not no_title and title_parts:
+        title_str = "  |  ".join(title_parts)
+        if len(axes) == 1:
+            axes[0].set_title(title_str, fontsize=10, pad=18)
+        else:
+            fig.suptitle(title_str, fontsize=10)
 
 
 # Production bar chart
@@ -1059,6 +1317,11 @@ def main():
         help="Omit the title from the Gantt chart (useful in publication mode).",
     )
     parser.add_argument(
+        "--no-break",
+        action="store_true",
+        help="Disable X-axis breaks; show the full uncompressed timeline.",
+    )
+    parser.add_argument(
         "--stn",
         action="store_true",
         help="Also generate a State-Task Network graph from TOML data.",
@@ -1142,7 +1405,10 @@ def main():
         print("Note: --production-output is ignored unless --publish is set.")
 
     plot_solution(
-        data, ax_gantt, deadline_hours=deadline_hours, publish_mode=args.publish,
+        data,
+        ax_gantt,
+        deadline_hours=deadline_hours,
+        publish_mode=args.publish,
         no_title=args.no_title,
     )
     if ax_prod is not None:
