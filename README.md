@@ -477,7 +477,7 @@ Final produced quantity is linked to last-event inventory and production (A18):
 
 $$ ST_{s,N} + \sum_{i:(i,s)\in IPS} \rho^{prod}_{i,s} \, b_{i,N} = FinalProd_s \quad \forall s \in S^P $$
 
-**Aging throughput link (`A18\_aging\_link`):**
+**Aging throughput link (`A18_aging_link`):**
 For products that have an aging step, all in-house production must pass through it. Because the aging task is the sole producer of $va_s$ (for aging-first lines) or of the final product (for aging-last lines), the total aging batch across all events upper-bounds $FinalProd_s$:
 
 $$ FinalProd_s \le \sum_{n \in N} b_{i^{Age}_s,\, n} \quad \forall s \in S^{Market} : i^{Age}_s \text{ exists} $$
@@ -485,7 +485,7 @@ $$ FinalProd_s \le \sum_{n \in N} b_{i^{Age}_s,\, n} \quad \forall s \in S^{Mark
 **Per-product lateness (`LateDefByProduct`):**
 Lateness is the amount by which the finish time of the last mandatory task $i^{last}_l$ exceeds the effective deadline:
 
-$$LatenessProd_{s_l} = \max\!\bigl(0,\; Tf_{i^{last}_l} - Deadline - AgingHours_{s_l}\bigr)$$
+$$LatenessProd_{s_l} = \max(0,\ Tf_{i^{last}_l} - Deadline - AgingHours_{s_l})$$
 
 $Deadline$ is the target delivery time common to all lines. For lines with aging, $AgingHours_s$ extends this target to account for the fixed aging duration, so that a wine is not penalised simply for needing to age. Lateness only accumulates when the final step finishes *beyond* $Deadline + AgingHours_s$, not immediately after aging ends. Implemented as:
 
@@ -531,7 +531,7 @@ $$ LatenessCost = c^{late} \cdot \sum_{s \in S^{Market}} LatenessProd_s $$
 
 Raw material cost term:
 
-$$ RawMaterialCost = \sum_{s\in S^R}\sum_{i:(i,s)\in ICS}\sum_{n\in N} C_s^{raw}\,\left(-\rho^{cons}_{i,s}\right)\,b_{i,n} $$
+$$ RawMaterialCost = \sum_{s\in S^R}\sum_{i:(i,s)\in ICS}\sum_{n\in N} C_s^{raw}\left(-\rho^{cons}_{i,s}\right) b_{i,n} $$
 
 Storage penalties:
 
