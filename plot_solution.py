@@ -30,7 +30,7 @@ from matplotlib.ticker import MultipleLocator
 TASK_COLORS: dict[str, str] = {
     "Pr": "#C06C84",  # pressing
     "Fa": "#E07B54",  # alcoholic fermentation
-    "Fl": "#5B8DB8",  # lactic fermentation
+    "Fl": "#5B8DB8",  # malolactic fermentation
     "Age": "#C8A97E",  # aging (barrel / jar)
     "Cs": "#6BBF7A",  # cold stabilization
     "Alm": "#9B7EC8",  # storage
@@ -1081,7 +1081,7 @@ def plot_solution(
     legend_defs = [
         ("Pr", "Pressing", TASK_COLORS["Pr"]),
         ("Fa", "Alcoholic fermentation", TASK_COLORS["Fa"]),
-        ("Fl", "Lactic fermentation", TASK_COLORS["Fl"]),
+        ("Fl", "Malolactic fermentation", TASK_COLORS["Fl"]),
         ("Age", "Aging", TASK_COLORS["Age"]),
         ("Cs", "Cold stabilization", TASK_COLORS["Cs"]),
         ("Alm", "Storage", TASK_COLORS["Alm"]),
