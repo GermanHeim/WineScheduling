@@ -844,7 +844,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             continue
         i_last = line_lateness_task[line]
         # Tightest Big-M is achieved when the task is inactive Tf <= H is always
-        # satisfied, so M only needs to cover H - Deadline - AgingHours
+        # satisfied, so M only needs to cover H - Deadline
         M_late = pyo.value(model.H) - pyo.value(model.Deadline)
         for n in model.n:
             model.LateDefByProduct.add(
