@@ -483,23 +483,15 @@ For products that have an aging step, all in-house production must pass through 
 $$ FinalProd_s \le \sum_{n \in N} b_{i^{Age}_s,\, n} \quad \forall s \in S^{Market} : i^{Age}_s \text{ exists} $$
 
 **Per-product lateness (`LateDefByProduct`):**
-Lateness is the amount by which the finish time of the last mandatory task $i^{last}_l$ exceeds the effective deadline:
+Products with an aging stage are exempt from the lateness penalty entirely. Their delivery date is considered flexible because the aging duration is inherent to the product and not under the scheduler's control.
 
-$$LatenessProd_{s_l} = \max(0,\ Tf_{i^{last}_l} - Deadline - AgingHours_{s_l})$$
+For non-aging products, lateness is the amount by which the finish time of the last mandatory task $i^{last}_l$ exceeds the deadline:
 
-$Deadline$ is the target delivery time common to all lines. For lines with aging, $AgingHours_s$ extends this target to account for the fixed aging duration, so that a wine is not penalised simply for needing to age. Lateness only accumulates when the final step finishes *beyond* $Deadline + AgingHours_s$, not immediately after aging ends. Implemented as:
+$$LatenessProd_{s_l} = \max(0,\ Tf_{i^{last}_l} - Deadline)$$
 
-$$ Tf_{i^{last}_l,\, n} \le Deadline + AgingHours_{s_l} + LatenessProd_{s_l} + M^{late}_{s_l}\,(1 - W_{i^{last}_l,\, n}) \quad \forall l,\, n \in N $$
+Implemented as:
 
-The tightest valid value is derived by requiring that when $W = 0$ the constraint always holds. Since $Tf \le H$ by the variable bound, the right-hand side needs only to reach $H$:
-
-$$Deadline + AgingHours_{s_l} + LatenessProd_{s_l} + M^{late}_{s_l} \ge H$$
-
-In the worst case $LatenessProd_{s_l} = 0$, giving the per-product tight Big-M:
-
-$$M^{late}_{s_l} = H - Deadline - AgingHours_{s_l}$$
-
-This is strictly tighter than $H$ for every product (using $Deadline \ge 0$ and $AgingHours_{s_l} \ge 0$), and roughly halves the coefficient for long-aged wines.
+$$ Tf_{i^{last}_l,\, n} \le Deadline + LatenessProd_{s_l} + M^{late}\,(1 - W_{i^{last}_l,\, n}) \quad \forall l \notin I^{Age},\, n \in N $$
 
 A storage utilization index is defined from storage assignment at the final event point. With storage persistence, a tank that is ever activated remains active through $N$, so final-event activity is equivalent to "used at least once":
 
@@ -525,9 +517,9 @@ Outsourcing cost term:
 
 $$ OutsourcingCost = \sum_{s\in S^{Market}} C^{out}_s \cdot Outsource_s $$
 
-Lateness cost term (summed across all products):
+Lateness cost term (summed over non-aging products only):
 
-$$ LatenessCost = c^{late} \cdot \sum_{s \in S^{Market}} LatenessProd_s $$
+$$ LatenessCost = c^{late} \cdot \sum_{s \in S^{Market} \setminus S^{Age}} LatenessProd_s $$
 
 Raw material cost term:
 
