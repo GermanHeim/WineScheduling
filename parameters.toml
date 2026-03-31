@@ -22,6 +22,7 @@
     penaltyMaxUtilization = 100.0 # Penalty for not utilizing tanks fully
     penaltyEmptyTank = 5000.0     # Penalty for leaving tanks empty
     penaltyAir = 1000.0           # Penalty for leaving air in tanks
+    penaltyMS = 1.0               # Penalty per hour of makespan
 
     # Activation/unit assignment limits
     iMax = 1

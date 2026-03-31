@@ -436,6 +436,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.penaltyMaxUtilization = pyo.Param(
         initialize=params["global"]["penaltyMaxUtilization"]
     )
+    model.penaltyMS = pyo.Param(initialize=params["global"].get("penaltyMS", 0.0))
     model.total_avg_range = pyo.Param(initialize=total_avg_range_value, mutable=False)
     model.inv_total_avg_range = pyo.Param(initialize=1 / total_avg_range_value)
 
@@ -1096,6 +1097,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             - model.RawMaterialCost
             - penalty_unused
             - penalty_space
+            - model.penaltyMS * model.MS
         )
 
     model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.maximize)
@@ -1145,6 +1147,9 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
             print(f"Lateness Cost: {pyo.value(model.LatenessCost, exception=False)}")
             print(
                 f"Raw Material Cost: {pyo.value(model.RawMaterialCost, exception=False)}"
+            )
+            print(
+                f"Makespan Penalty: {pyo.value(model.penaltyMS * model.MS, exception=False)}"
             )
         export_results(
             model,
