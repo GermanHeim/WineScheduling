@@ -834,22 +834,22 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         else pyo.Constraint.Skip,
     )
 
+    # Products with an aging stage are not subject to the lateness penalty
+    aging_products = set(aging_task_by_product.keys())
+
     model.LateDefByProduct = pyo.ConstraintList()
     for line in lines:
         product = line_product[line]
+        if product in aging_products:
+            continue
         i_last = line_lateness_task[line]
         # Tightest Big-M is achieved when the task is inactive Tf <= H is always
         # satisfied, so M only needs to cover H - Deadline - AgingHours
-        M_late = (
-            pyo.value(model.H)
-            - pyo.value(model.Deadline)
-            - pyo.value(model.AgingHoursByProduct[product])  # type: ignore[index]
-        )
+        M_late = pyo.value(model.H) - pyo.value(model.Deadline)
         for n in model.n:
             model.LateDefByProduct.add(
                 model.Tf[i_last, n]
                 <= model.Deadline
-                + model.AgingHoursByProduct[product]
                 + model.LatenessProd[product]
                 + M_late * (1 - active_disjuncts[i_last, n].binary_indicator_var)
             )
@@ -1065,11 +1065,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.OutsourcingCost = pyo.Expression(
         expr=sum(model.CostOutsourcing[s] * model.Outsource[s] for s in model.SMarket)
     )
+    late_products = [s for s in model.SMarket if s not in aging_task_by_product]  # type: ignore[union-attr]
     model.Lateness = pyo.Expression(
-        expr=sum(model.LatenessProd[s] for s in model.SMarket)
+        expr=sum(model.LatenessProd[s] for s in late_products)
     )
     model.LatenessCost = pyo.Expression(
-        expr=model.penaltyLate * sum(model.LatenessProd[s] for s in model.SMarket)
+        expr=model.penaltyLate * sum(model.LatenessProd[s] for s in late_products)  # type: ignore[operator]
     )
     model.RawMaterialCost = pyo.Expression(
         expr=sum(
