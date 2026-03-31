@@ -455,6 +455,7 @@ This section documents the economic variant implemented in `WineSchedulingEconom
 - $c^{late}$: lateness penalty coefficient (cost per hour per product)
 - $c^{empty}$: penalty on unused storage tanks
 - $c^{air}$: penalty on free storage space
+- $c^{MS}$: makespan penalty coefficient (cost per hour of schedule length)
 - $C_s^{raw}$: raw-material cost per liter for shared raw pools $s \in S^R$
 - $\overline{\Delta B}$: average usable storage-capacity range used to normalize free-space penalties
 
@@ -535,4 +536,4 @@ $$ Penalty_{air} = c^{air} \cdot \frac{1}{\overline{\Delta B}} \cdot \sum_{j\in 
 
 Profit-maximization objective:
 
-$$ \max Z = Revenue - OutsourcingCost - LatenessCost - RawMaterialCost - Penalty_{empty} - Penalty_{air} $$
+$$ \max Z = Revenue - OutsourcingCost - LatenessCost - RawMaterialCost - Penalty_{empty} - Penalty_{air} - c^{MS} \cdot MS $$
