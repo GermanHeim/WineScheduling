@@ -509,7 +509,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     for i, j in model.ij:
         for n in model.n:
-            model.bj[i, j, n].setub(max_tank_cap)
+            model.bj[i, j, n].setub(pyo.value(model.Bmax[i, j]))
 
     model.ST = pyo.Var(model.s, model.n, domain=pyo.NonNegativeReals)
     model.Ts = pyo.Var(
@@ -556,6 +556,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     for sp in model.SP:
         if sp in FinalProd_bounds:
             model.FinalProd[sp].setub(FinalProd_bounds[sp])
+
+    late_ub = pyo.value(model.H) - pyo.value(model.Deadline)
+    for s in model.SMarket:
+        model.LatenessProd[s].setub(late_ub)
+        model.Outsource[s].setub(pyo.value(model.D[s]))
+    model.JST_unused.setub(pyo.value(model.nJST))
+    for j in model.j:
+        freespace_ub = max(
+            pyo.value(model.Bmax[i, j]) for i in model.i if (i, j) in model.ij
+        )
+        model.Freespace[j].setub(freespace_ub)
 
     # ========================================
     # DISJUNCT PRE-CREATION
