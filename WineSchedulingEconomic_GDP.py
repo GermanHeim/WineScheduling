@@ -160,6 +160,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     unit_instances_by_base = {}
     storage_units = []
 
+    exterior_units = []
+
     for unit_name, unit_cfg in units_cfg.items():
         quantity = int(unit_cfg.get("quantity", 1))
         if quantity < 1:
@@ -171,9 +173,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             unit_instances_by_base[unit_name].append(inst_name)
             if "Alm" in unit_cfg.get("task_bounds", {}):
                 storage_units.append(inst_name)
+            if unit_cfg.get("exterior", False):
+                exterior_units.append(inst_name)
 
     model.j = pyo.Set(initialize=unit_instances)
     model.JST = pyo.Set(initialize=storage_units)
+    model.JEXT = pyo.Set(initialize=exterior_units)
     model.JBAR = pyo.Set(initialize=unit_instances_by_base.get("barrique", []))
     model.JJAR = pyo.Set(initialize=unit_instances_by_base.get("jar", []))
 
@@ -437,6 +442,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         initialize=params["global"]["penaltyMaxUtilization"]
     )
     model.penaltyMS = pyo.Param(initialize=params["global"].get("penaltyMS", 0.0))
+    model.costCooling = pyo.Param(initialize=params["global"].get("costCooling", 0.0))
     model.total_avg_range = pyo.Param(initialize=total_avg_range_value, mutable=False)
     model.inv_total_avg_range = pyo.Param(initialize=1 / total_avg_range_value)
 
@@ -1083,6 +1089,27 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         )
     )
 
+    # For non-storage tasks the hull transformation enforces globally:
+    #   Tf[i,n] - Ts[i,n] = alpha[i]*W[i,n] + beta[i]*b[i,n]
+    # Substituting eliminates Tf and Ts from the bilinear product, replacing
+    # variables with range [0, H] with W in [0,1] and b in [0,b_ub].
+    def cooling_term(i, j, n):
+        W = active_disjuncts[i, n].binary_indicator_var
+        bj = model.bj[i, j, n]
+        if i in model.inst:
+            return model.alpha[i] * bj * W + model.beta[i] * bj * model.b[i, n]
+        return bj * (model.Tf[i, n] - model.Ts[i, n])
+
+    model.CoolingCost = pyo.Expression(
+        expr=model.costCooling
+        * sum(
+            cooling_term(i, j, n)
+            for (i, j) in model.ij
+            if j in model.JEXT
+            for n in model.n
+        )
+    )
+
     def obj_func(model):
         penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JST_unused
         penalty_space = (
@@ -1098,6 +1125,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             - penalty_unused
             - penalty_space
             - model.penaltyMS * model.MS
+            - model.CoolingCost
         )
 
     model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.maximize)
@@ -1123,6 +1151,7 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
         return None
 
     # Set solver options
+    solver.options["NonConvex"] = 2  # Required for bilinear cooling cost term
     solver.options["TimeLimit"] = time_limit
     solver.options["MIPGap"] = 0.001
     solver.options["MIPFocus"] = 2
@@ -1151,6 +1180,7 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
             print(
                 f"Makespan Penalty: {pyo.value(model.penaltyMS * model.MS, exception=False)}"
             )
+            print(f"Cooling Cost: {pyo.value(model.CoolingCost, exception=False)}")
         export_results(
             model,
             "Wine Scheduling Economic GDP",
