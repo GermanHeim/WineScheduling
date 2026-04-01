@@ -948,6 +948,10 @@ def plot_solution(
             if clip_end <= clip_start:
                 continue
 
+            is_long_aging = "Long" in t["task"]
+            hatch = "////" if is_long_aging else None
+            edge_color = "#5C3D1E" if is_long_aging else "white"
+
             drawn_display_units: set[str] = set()
             for u in t["units"]:
                 display_unit = unit_to_rep.get(u["unit"], u["unit"])
@@ -962,9 +966,10 @@ def plot_solution(
                     left=clip_start,
                     height=bar_height,
                     color=color,
-                    edgecolor="white",
+                    edgecolor=edge_color,
                     linewidth=0.6,
                     align="center",
+                    hatch=hatch,
                 )
 
                 # Label only in the segment with the largest visible clip
@@ -1048,30 +1053,75 @@ def plot_solution(
 
     for i, (seg_ax, (seg_start, seg_end)) in enumerate(zip(axes, segments)):
         seg_ax.set_xlim(seg_start, seg_end)
-        major_h, minor_h = pick_hour_interval(seg_end - seg_start)
-        seg_ax.xaxis.set_minor_locator(MultipleLocator(minor_h))
-        seg_ax.xaxis.set_major_locator(MultipleLocator(major_h))
-        seg_ax.grid(axis="x", which="minor", linestyle=":", linewidth=0.4, alpha=0.5)
-        seg_ax.grid(axis="x", which="major", linestyle="--", linewidth=0.6, alpha=0.5)
         if i < len(axes) - 1:
             seg_ax.spines["right"].set_visible(False)
-        if i == 0:
-            seg_ax.set_xlabel("Time (hours)", fontsize=10)
-        else:
-            seg_ax.set_xlabel("")
 
-        ax2 = seg_ax.twiny()
-        ax2.set_xlim(seg_start / 24, seg_end / 24)
-        major_d = pick_day_interval((seg_end - seg_start) / 24)
-        ax2.xaxis.set_major_locator(MultipleLocator(major_d))
-        if i < len(axes) - 1:
-            ax2.spines["right"].set_visible(False)
-        if i > 0:
-            ax2.spines["left"].set_visible(False)
-        if i == 0:
+        if is_economic:
+            # Days-only bottom axis
+            major_d = pick_day_interval((seg_end - seg_start) / 24)
+            seg_ax.xaxis.set_major_locator(MultipleLocator(major_d * 24))
+            seg_ax.xaxis.set_minor_locator(MultipleLocator(major_d * 24 / 4))
+            seg_ax.xaxis.set_major_formatter(
+                plt.FuncFormatter(lambda x, _: f"{x / 24:.0f}")
+            )
+        else:
+            major_h, minor_h = pick_hour_interval(seg_end - seg_start)
+            seg_ax.xaxis.set_minor_locator(MultipleLocator(minor_h))
+            seg_ax.xaxis.set_major_locator(MultipleLocator(major_h))
+
+        seg_ax.grid(axis="x", which="minor", linestyle=":", linewidth=0.4, alpha=0.5)
+        seg_ax.grid(axis="x", which="major", linestyle="--", linewidth=0.6, alpha=0.5)
+
+        if not is_economic:
+            ax2 = seg_ax.twiny()
+            ax2.set_xlim(seg_start / 24, seg_end / 24)
+            major_d = pick_day_interval((seg_end - seg_start) / 24)
+            ax2.xaxis.set_major_locator(MultipleLocator(major_d))
+            if i < len(axes) - 1:
+                ax2.spines["right"].set_visible(False)
+            if i > 0:
+                ax2.spines["left"].set_visible(False)
+
+    # Place x-axis labels centred across all segments
+    if is_economic:
+        if len(axes) == 1:
+            axes[0].set_xlabel("Time (days)", fontsize=10)
+        else:
+            ann = axes[0].annotate(
+                "Time (days)",
+                xy=(0.5, -0.04),
+                xycoords=("figure fraction", "axes fraction"),
+                ha="center",
+                va="top",
+                fontsize=10,
+                annotation_clip=False,
+            )
+            ann.set_in_layout(False)
+    else:
+        if len(axes) == 1:
+            axes[0].set_xlabel("Time (hours)", fontsize=10)
             ax2.set_xlabel("Time (days)", fontsize=10)
         else:
-            ax2.set_xlabel("")
+            ann_b = axes[0].annotate(
+                "Time (hours)",
+                xy=(0.5, -0.03),
+                xycoords=("figure fraction", "axes fraction"),
+                ha="center",
+                va="top",
+                fontsize=10,
+                annotation_clip=False,
+            )
+            ann_b.set_in_layout(False)
+            ann_t = axes[0].annotate(
+                "Time (days)",
+                xy=(0.5, 1.07),
+                xycoords=("figure fraction", "axes fraction"),
+                ha="center",
+                va="bottom",
+                fontsize=10,
+                annotation_clip=False,
+            )
+            ann_t.set_in_layout(False)
 
     if deadline_hours is not None and deadline_hours >= 0:
         for seg_ax, (seg_start, seg_end) in zip(axes, segments):
@@ -1402,7 +1452,7 @@ def main():
     else:
         fig_main = plt.figure(figsize=(16, 10), layout="constrained")
         if has_production:
-            gs = fig_main.add_gridspec(2, 1, height_ratios=[3, 1])
+            gs = fig_main.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.1)
             ax_gantt = fig_main.add_subplot(gs[0])
             ax_prod = fig_main.add_subplot(gs[1])
             fig_prod = None
