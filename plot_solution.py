@@ -1023,17 +1023,27 @@ def plot_solution(
             seg_ax.tick_params(axis="y", length=0)
             seg_ax.spines["left"].set_visible(False)
 
+    is_economic = "economic" in str(data.get("model_name", "")).lower()
+
     def pick_hour_interval(width_h: float) -> tuple[int, int]:
         """Return (major, minor) hour tick intervals for a segment of given width."""
         for major, minor in [(24, 6), (168, 24), (504, 168), (1008, 168), (2016, 336)]:
-            if width_h / major <= 15:
-                return major, minor
+            if is_economic:
+                if width_h / major <= 10:
+                    return major, minor
+            else:
+                if width_h / major <= 15:
+                    return major, minor
         return 4032, 672
 
     def pick_day_interval(width_d: float) -> int:
         for interval in [7, 14, 28, 56, 91, 182]:
-            if width_d / interval <= 15:
-                return interval
+            if is_economic:
+                if width_d / interval <= 10:
+                    return interval
+            else:
+                if width_d / interval <= 15:
+                    return interval
         return 365
 
     for i, (seg_ax, (seg_start, seg_end)) in enumerate(zip(axes, segments)):
