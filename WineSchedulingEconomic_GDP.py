@@ -980,9 +980,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             jar_pairs,
             model.n,
             rule=lambda m, j_prev, j_next, n: sum(
-                m.y[i, j_next, n] for i in m.i if (i, j_next) in m.ij
+                m.y[i, j_next, n_prime]
+                for i in m.i
+                for n_prime in m.n
+                if (i, j_next) in m.ij and n_prime <= n
             )
-            <= sum(m.y[i, j_prev, n] for i in m.i if (i, j_prev) in m.ij),
+            <= sum(
+                m.y[i, j_prev, n_prime]
+                for i in m.i
+                for n_prime in m.n
+                if (i, j_prev) in m.ij and n_prime <= n
+            ),
         )
 
     # Barrique reuse constraints: if a barrique is reused at a later event,
