@@ -445,6 +445,7 @@ This section documents the economic variant implemented in `WineSchedulingEconom
 - $S^R \subset S$: Shared raw-material pool states (e.g. $s_{red}$, $s_{white\_rose}$)
 - $S^{Age} \subset S$: Post-aging, pre-cold-stabilization intermediate states ($va_l$ for lines where aging precedes cold stabilization). Treated as NIS - cold stabilization must begin immediately after aging finishes.
 - $I^{Age} \subseteq I$: Aging tasks ($AgeBar^*$, $AgeJar^*$). Each product $s$ has at most one aging task $i^{Age}_s$.
+- $J^{ext} \subseteq J$: Exterior units that require active cooling (flagged via `exterior = true` in the TOML).
 
 ### Additional Parameters
 
@@ -456,6 +457,7 @@ This section documents the economic variant implemented in `WineSchedulingEconom
 - $c^{empty}$: penalty on unused storage tanks
 - $c^{air}$: penalty on free storage space
 - $c^{MS}$: makespan penalty coefficient (cost per hour of schedule length)
+- $c^{cool}$: cooling cost per liter-hour for exterior tanks ($/(L·h))
 - $C_s^{raw}$: raw-material cost per liter for shared raw pools $s \in S^R$
 - $\overline{\Delta B}$: average usable storage-capacity range used to normalize free-space penalties
 
@@ -534,6 +536,12 @@ Because of persistence (A15), once a storage assignment is activated, $y_{i,j,n}
 
 $$ Penalty_{air} = c^{air} \cdot \frac{1}{\overline{\Delta B}} \cdot \sum_{j\in JST} Freespace_j $$
 
+Cooling cost for exterior tanks (bilinear, requires Gurobi `NonConvex=2`): For non-storage tasks the hull transformation enforces $Tf_{i,n} - Ts_{i,n} = \alpha_i W_{i,n} + \beta_i b_{i,n}$ globally, so the expression is substituted to eliminate $Tf$ and $Ts$:
+
+$$CoolingCost = c^{cool} \cdot \sum_{\substack{j \in J^{ext} \\ (i,j) \in IJ}} \sum_{n \in N} \begin{cases} \alpha_i \, b_{i,j,n} \, W_{i,n} + \beta_i \, b_{i,j,n} \, b_{i,n} & i \in I^{nst} \\ b_{i,j,n} \cdot (Tf_{i,n} - Ts_{i,n}) & i \in I^{st} \end{cases}$$
+
+This replaces bilinear products with $Tf, Ts \in [0, H]$ by products with $W \in [0,1]$ and $b \in [0, b^{ub}_i]$, tightening the McCormick envelope and improving Gurobi's spatial branch-and-bound bound quality.
+
 Profit-maximization objective:
 
-$$ \max Z = Revenue - OutsourcingCost - LatenessCost - RawMaterialCost - Penalty_{empty} - Penalty_{air} - c^{MS} \cdot MS $$
+$$ \max Z = Revenue - OutsourcingCost - LatenessCost - RawMaterialCost - Penalty_{empty} - Penalty_{air} - c^{MS} \cdot MS - CoolingCost $$
