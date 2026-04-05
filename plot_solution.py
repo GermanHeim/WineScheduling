@@ -323,6 +323,14 @@ def task_line(task_name: str) -> str:
     return "".join(ch for ch in task_name if ch.isdigit())
 
 
+def task_stage_key(task_name: str) -> str:
+    """Return the canonical stage family used for plotting and coloring."""
+    stage = task_stage(task_name)
+    if stage.startswith("Age"):
+        return "Age"
+    return stage
+
+
 def format_task_label(task_name: str, publish_mode: bool) -> str:
     """Return a display label for task codes, expanded in publish mode."""
     if not publish_mode:
@@ -333,6 +341,10 @@ def format_task_label(task_name: str, publish_mode: bool) -> str:
     long_names = {
         "Fa": "Alcoholic Fermentation",
         "Fl": "Malolactic Fermentation",
+        "AgeBarShort": "Barrique Aging (4 months)",
+        "AgeBarLong": "Barrique Aging (18 months)",
+        "AgeJarShort": "Jar Aging (4 months)",
+        "AgeJarMedium": "Jar Aging (6 months)",
         "Alm": "Storage",
         "Cs": "Cold Stabilization",
     }
@@ -509,8 +521,9 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
         "Pr": 1.3,
         "Fa": 2.3,
         "Fl": 3.4,
-        "Cs": 4.5,
-        "Alm": 5.6,
+        "Age": 4.1,
+        "Cs": 5.0,
+        "Alm": 6.1,
     }
 
     # Place material states between the stages that consume/produce them to preserve
@@ -519,15 +532,16 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
         "s": 0.2,
         "m": 1.8,
         "v": 2.95,
-        "vl": 3.95,
-        "p": 6.6,
+        "vl": 3.8,
+        "va": 4.45,
+        "p": 7.0,
     }
 
     pos: dict[str, tuple[float, float]] = {}
 
     for task in tasks:
         line = task_line(task)
-        stage = task_stage(task)
+        stage = task_stage_key(task)
         pos[task] = (stage_x.get(stage, 3.0), y_by_line[line])
 
     task_line_map = {task: task_line(task) for task in tasks}
@@ -571,6 +585,8 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
             pos[state] = (state_x["s"], y)
         elif state.startswith("m"):
             pos[state] = (state_x["m"], y)
+        elif state.startswith("va"):
+            pos[state] = (state_x["va"], y)
         elif state.startswith("vl"):
             pos[state] = (state_x["vl"], y)
         elif state.startswith("v"):
@@ -730,7 +746,7 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
     # Draw task nodes
     for task in task_nodes:
         x, y = pos[task]
-        stage = task_stage(task)
+        stage = task_stage_key(task)
         ax.scatter(
             [x],
             [y],
