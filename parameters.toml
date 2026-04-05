@@ -454,27 +454,27 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 
 [rho.AgeBarShort1]
     rhoIScons = {vl1 = -1.0}
-    rhoISprod = {va1 = 1.0}
+    rhoISprod = {va1 = 0.99}
 
 [rho.AgeJarShort4]
     rhoIScons = {vl4 = -1.0}
-    rhoISprod = {va4 = 1.0}
+    rhoISprod = {va4 = 0.99}
 
 [rho.AgeBarShort5]
     rhoIScons = {vl5 = -1.0}
-    rhoISprod = {va5 = 1.0}
+    rhoISprod = {va5 = 0.99}
 
 [rho.AgeJarMedium8]
     rhoIScons = {v8 = -1.0}
-    rhoISprod = {va8 = 1.0}
+    rhoISprod = {va8 = 0.985}
 
 [rho.AgeJarShort9]
     rhoIScons = {v9 = -1.0}
-    rhoISprod = {va9 = 1.0}
+    rhoISprod = {va9 = 0.99}
 
 [rho.AgeBarLong10]
     rhoIScons = {vl10 = -1.0}
-    rhoISprod = {va10 = 1.0}
+    rhoISprod = {va10 = 0.97}
 
 # 8. Units
 #
