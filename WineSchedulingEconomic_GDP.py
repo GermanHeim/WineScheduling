@@ -568,6 +568,28 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         )
         model.Freespace[j].setub(freespace_ub)
 
+    # Per-task time window bounds derived from minimum cumulative step durations.
+    # earliest_start[k] = sum of alpha for all steps before k (can't start earlier).
+    # latest_finish[k] = H - sum of alpha for all steps after k (must leave room).
+    H_val = pyo.value(model.H)
+    for line, cfg in lines_cfg.items():
+        steps = cfg["steps"]
+        alphas = [pyo.value(model.alpha[f"{step}{line}"]) for step in steps]
+        prefix = [0.0] * len(steps)
+        suffix = [0.0] * len(steps)
+        for k in range(1, len(steps)):
+            prefix[k] = prefix[k - 1] + alphas[k - 1]
+        for k in range(len(steps) - 2, -1, -1):
+            suffix[k] = suffix[k + 1] + alphas[k + 1]
+        for k, step in enumerate(steps):
+            task = f"{step}{line}"
+            if prefix[k] > 0:
+                for n in model.n:
+                    model.Ts[task, n].setlb(prefix[k])
+            if suffix[k] > 0:
+                for n in model.n:
+                    model.Tf[task, n].setub(H_val - suffix[k])
+
     # ========================================
     # DISJUNCT PRE-CREATION
     # ========================================
