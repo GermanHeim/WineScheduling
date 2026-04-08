@@ -92,7 +92,7 @@ def export_results(model, model_name, filename=None):
     task_schedule.sort(key=lambda x: (x["start"], x["task"]))
 
     # Write output file
-    with open(filename, "w") as f:
+    with open(filename, "w", encoding="utf-8") as f:
         sep = "=" * 80
 
         # Header
