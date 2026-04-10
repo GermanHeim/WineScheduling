@@ -5,7 +5,7 @@
 # 1. Global Settings - Time and Penalties
 [global]
     # The Horizon (total available hours in the model)
-    H = 18500  # days?
+    H = 15000  # hours
 
     # Number of event points
     n_max = 6
@@ -40,84 +40,74 @@
 # 'demand': Demand (L)
 [products]
     [products.Red1]
-        name = "Cabernet Reserva"
+        name = "Estenas madurado"
         category = "Red"
-        demand = 4000
-        price = 24.50
-        costOutsourcing = 38.0
-        outsourced = false
-
-    [products.White1]
-        name = "Sauvignon Blanc"
-        category = "White"
-        demand = 9750
-        price = 8.00
-        costOutsourcing = 15.5
-
-    [products.Rose1]
-        name = "Rose de Verano"
-        category = "Rose"
-        demand = 3780
-        price = 9.50
-        costOutsourcing = 12.0
+        demand = 3000
+        price = 10.00
+        costOutsourcing = 16.0
 
     [products.Red2]
-        name = "Merlot Clasico"
+        name = "Estenas crianza"
         category = "Red"
         demand = 4000
-        price = 19.00
-        costOutsourcing = 24.0
-
-    [products.White2]
-        name = "Chardonnay Roble"
-        category = "White"
-        demand = 10000
-        price = 16.00
-        costOutsourcing = 26.0
-        outsourced = false
-
-    [products.Rose2]
-        name = "Rose Andino"
-        category = "Rose"
-        demand = 10000
-        price = 9.00
-        costOutsourcing = 14.50
+        price = 15.00
+        costOutsourcing = 22.0
 
     [products.Red3]
-        name = "Malbec Joven"
+        name = "Martínez Bermell"
         category = "Red"
-        demand = 4000
-        price = 17.75
-        costOutsourcing = 22.50
-
-    [products.White3]
-        name = "Semillon Fresco"
-        category = "White"
-        demand = 6000
-        price = 9.00
-        costOutsourcing = 12.25
-
-    [products.Rose3]
-        name = "Rose Patagonia"
-        category = "Rose"
-        demand = 10000
-        price = 9.25
-        costOutsourcing = 14.0
+        demand = 3500
+        price = 18.00
+        costOutsourcing = 26.0
 
     [products.Red4]
-        name = "Syrah de Altura"
+        name = "Casa Don Ángel"
         category = "Red"
-        demand = 7500
-        price = 26.50
-        costOutsourcing = 99999999.25
-        outsourced = false
+        demand = 2500
+        price = 22.00
+        costOutsourcing = 32.0
 
-    [products.White4]
-        name = "Torrontes Aromatico"
+    [products.Red5]
+        name = "Para el bobal de Estenas"
+        category = "Red"
+        demand = 2000
+        price = 14.00
+        costOutsourcing = 20.0
+
+    [products.Rose1]
+        name = "Estenas Rosado"
+        category = "Rose"
+        demand = 5000
+        price = 7.00
+        costOutsourcing = 11.0
+
+    [products.Rose2]
+        name = "El rosado de Estenas"
+        category = "Rose"
+        demand = 3000
+        price = 11.00
+        costOutsourcing = 16.0
+
+    [products.White1]
+        name = "Estenas blanco"
         category = "White"
-        demand = 8500
-        price = 9.00
-        costOutsourcing = 12.25
+        demand = 5000
+        price = 7.00
+        costOutsourcing = 11.0
+
+    [products.White2]
+        name = "La tardana de estenas"
+        category = "White"
+        demand = 3000
+        price = 11.00
+        costOutsourcing = 16.0
+
+    [products.White3]
+        name = "Viña lidón"
+        category = "White"
+        demand = 4000
+        price = 16.00
+        costOutsourcing = 23.0
 
 # 3. Initial Inventory - Vineyard/Reception
 #
@@ -140,76 +130,71 @@
 # This is equivalent to adding an explicit constraint,
 # but implemented as a variable bound, which is tighter and better for MIP performance.
 [product_ub]
-    Red1 = 7000
-    White1 = 12000
-    Rose1 = 5000
+    Red1 = 5000
     Red2 = 6000
-    White2 = 15000
-    Rose2 = 15000
-    Red3 = 6000
-    White3 = 8000
-    Rose3 = 15000
-    Red4 = 10000
-    White4 = 12000
+    Red3 = 5500
+    Red4 = 4000
+    Red5 = 3500
+    Rose1 = 8000
+    Rose2 = 5000
+    White1 = 8000
+    White2 = 5000
+    White3 = 6000
 
 # 5. Product Lines
 #
 # Each [lines.N] entry defines one production line.
 #
 # steps: ordered list of processing tasks for this line
-#        Pr = pressing (separates liquid from skins/seeds)
+#        Pr = pressing
 #        Fa = alcoholic fermentation
-#        Fl = lactic (malolactic) fermentation
+#        Fl = malolactic fermentation
 #        Cs = cold stabilization
+#        AgeBarXM = barrel aging X months
+#        AgeJarXM = jar aging X months
 #        Alm = long-term storage
 # ecobulk: (optional, default false)
 #          true -> product is stored in ecobulk-type tanks (subject to A16/A17)
 #          false -> no ecobulk constraint
 [lines.1]
 product = "Red1"
-steps = ["Fa", "Fl", "AgeBarShort", "Cs"]
+steps = ["Fa", "Fl", "AgeBar4M", "Cs"]
 
 [lines.2]
-product = "White1"
-steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
-ecobulk = true
+product = "Red2"
+steps = ["Fa", "Fl", "AgeBar9M", "Cs"]
 
 [lines.3]
-product = "Rose1"
-steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
-ecobulk = true
+product = "Red3"
+steps = ["Fa", "Fl", "AgeBar11M", "Cs"]
 
 [lines.4]
-product = "Red2"
-steps = ["Fa", "Fl", "AgeJarShort", "Cs"]
+product = "Red4"
+steps = ["Fa", "Fl", "AgeBar15M", "Cs"]
 
 [lines.5]
-product = "White2"
-steps = ["Pr", "Fa", "Fl", "AgeBarShort", "Cs"]
+product = "Red5"
+steps = ["Fa", "Fl", "AgeJar4M", "Cs"]
 
 [lines.6]
-product = "Rose2"
-steps = ["Pr", "Fa", "Fl", "Cs"]
+product = "Rose1"
+steps = ["Pr", "Fa", "Cs"]
 
 [lines.7]
-product = "Red3"
-steps = ["Fa", "Fl", "Cs"]
+product = "Rose2"
+steps = ["Pr", "Fa", "AgeJar1M", "Cs"]
 
 [lines.8]
-product = "White3"
-steps = ["Pr", "Fa", "AgeJarMedium", "Cs"]
+product = "White1"
+steps = ["Pr", "Fa", "Cs"]
 
 [lines.9]
-product = "Rose3"
-steps = ["Pr", "Fa", "AgeJarShort", "Cs"]
+product = "White2"
+steps = ["Pr", "Fa", "AgeJar1M", "Cs"]
 
 [lines.10]
-product = "Red4"
-steps = ["Fa", "Fl", "AgeBarLong", "Cs"]
-
-[lines.11]
-product = "White4"
-steps = ["Pr", "Fa", "Fl", "Cs"]
+product = "White3"
+steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 
 # 6. Tasks Templates
 #
@@ -239,35 +224,51 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     beta = 0.0
     compatible_units = ["iso5000", "iso10000"]
 
-# Storage (Alm)
-[templates.Alm]
+# Aging in barriques (2 months)
+[templates.AgeBar2M]
+    alpha = 1440.0
     beta = 0.0
-    compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700", "iso5000", "iso10000"]
+    compatible_units = ["barrique"]
+    max_units = 85
 
 # Aging in barriques (4 months)
-[templates.AgeBarShort]
+[templates.AgeBar4M]
     alpha = 2880.0
     beta = 0.0
     compatible_units = ["barrique"]
-    max_units = 100
+    max_units = 85
 
-# Aging in barriques (18 months)
-[templates.AgeBarLong]
-    alpha = 12960.0
+# Aging in barriques (9 months)
+[templates.AgeBar9M]
+    alpha = 6480.0
     beta = 0.0
     compatible_units = ["barrique"]
-    max_units = 100
+    max_units = 85
 
-# Aging in jars (4 months)
-[templates.AgeJarShort]
-    alpha = 2880.0
+# Aging in barriques (11 months)
+[templates.AgeBar11M]
+    alpha = 7920.0
+    beta = 0.0
+    compatible_units = ["barrique"]
+    max_units = 85
+
+# Aging in barriques (15 months)
+[templates.AgeBar15M]
+    alpha = 10800.0
+    beta = 0.0
+    compatible_units = ["barrique"]
+    max_units = 85
+
+# Aging in jars (1 month)
+[templates.AgeJar1M]
+    alpha = 720.0
     beta = 0.0
     compatible_units = ["jar"]
     max_units = 40
 
-# Aging in jars (6 months)
-[templates.AgeJarMedium]
-    alpha = 4320.0
+# Aging in jars (4 months)
+[templates.AgeJar4M]
+    alpha = 2880.0
     beta = 0.0
     compatible_units = ["jar"]
     max_units = 40
@@ -280,201 +281,157 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     rhoIScons = {s_red = -1.0}
     rhoISprod = {v1 = 0.7}
 
-[rho.Fa2]
-    rhoIScons = {m2 = -1.0}
-    rhoISprod = {v2 = 1.0}
-
-[rho.Fa3]
-    rhoIScons = {m3 = -1.0}
-    rhoISprod = {v3 = 1.0}
-
-[rho.Fa4]
-    rhoIScons = {s_red = -1.0}
-    rhoISprod = {v4 = 0.7}
-
-[rho.Fa5]
-    rhoIScons = {m5 = -1.0}
-    rhoISprod = {v5 = 1.0}
-
-[rho.Fa6]
-    rhoIScons = {m6 = -1.0}
-    rhoISprod = {v6 = 1.0}
-
-[rho.Fa7]
-    rhoIScons = {s_red = -1.0}
-    rhoISprod = {v7 = 0.7}
-
-[rho.Fa8]
-    rhoIScons = {m8 = -1.0}
-    rhoISprod = {v8 = 1.0}
-
-[rho.Fa9]
-    rhoIScons = {m9 = -1.0}
-    rhoISprod = {v9 = 1.0}
-
-[rho.Fa10]
-    rhoIScons = {s_red = -1.0}
-    rhoISprod = {v10 = 0.7}
-
-[rho.Fa11]
-    rhoIScons = {m11 = -1.0}
-    rhoISprod = {v11 = 1.0}
-
-[rho.Pr2]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m2 = 0.7, dsch = 0.3}
-
-[rho.Pr3]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m3 = 0.7, dsch = 0.3}
-
-[rho.Pr5]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m5 = 0.7, dsch = 0.3}
-
-[rho.Pr6]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m6 = 0.7, dsch = 0.3}
-
-[rho.Pr8]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m8 = 0.7, dsch = 0.3}
-
-[rho.Pr9]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m9 = 0.7, dsch = 0.3}
-
-[rho.Pr11]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m11 = 0.7, dsch = 0.3}
-
 [rho.Fl1]
     rhoIScons = {v1 = -1.0}
     rhoISprod = {vl1 = 0.96}
 
-[rho.Fl2]
-    rhoIScons = {v2 = -1.0}
-    rhoISprod = {vl2 = 0.96}
-
-[rho.Fl3]
-    rhoIScons = {v3 = -1.0}
-    rhoISprod = {vl3 = 0.96}
-
-[rho.Fl4]
-    rhoIScons = {v4 = -1.0}
-    rhoISprod = {vl4 = 0.96}
-
-[rho.Fl5]
-    rhoIScons = {v5 = -1.0}
-    rhoISprod = {vl5 = 0.96}
-
-[rho.Fl6]
-    rhoIScons = {v6 = -1.0}
-    rhoISprod = {vl6 = 0.96}
-
-[rho.Fl7]
-    rhoIScons = {v7 = -1.0}
-    rhoISprod = {vl7 = 0.96}
-
-[rho.Fl10]
-    rhoIScons = {v10 = -1.0}
-    rhoISprod = {vl10 = 0.96}
-
-[rho.Fl11]
-    rhoIScons = {v11 = -1.0}
-    rhoISprod = {vl11 = 0.96}
+[rho.AgeBar4M1]
+    rhoIScons = {vl1 = -1.0}
+    rhoISprod = {va1 = 0.99}
 
 [rho.Cs1]
     rhoIScons = {va1 = -1.0}
     rhoISprod = {Red1 = 1.0}
 
-[rho.Cs2]
+[rho.Fa2]
+    rhoIScons = {s_red = -1.0}
+    rhoISprod = {v2 = 0.7}
+
+[rho.Fl2]
+    rhoIScons = {v2 = -1.0}
+    rhoISprod = {vl2 = 0.96}
+
+[rho.AgeBar9M2]
     rhoIScons = {vl2 = -1.0}
-    rhoISprod = {White1 = 1.0}
+    rhoISprod = {va2 = 0.985}
+
+[rho.Cs2]
+    rhoIScons = {va2 = -1.0}
+    rhoISprod = {Red2 = 1.0}
+
+[rho.Fa3]
+    rhoIScons = {s_red = -1.0}
+    rhoISprod = {v3 = 0.7}
+
+[rho.Fl3]
+    rhoIScons = {v3 = -1.0}
+    rhoISprod = {vl3 = 0.96}
+
+[rho.AgeBar11M3]
+    rhoIScons = {vl3 = -1.0}
+    rhoISprod = {va3 = 0.975}
 
 [rho.Cs3]
-    rhoIScons = {vl3 = -1.0}
-    rhoISprod = {Rose1 = 1.0}
+    rhoIScons = {va3 = -1.0}
+    rhoISprod = {Red3 = 1.0}
+
+[rho.Fa4]
+    rhoIScons = {s_red = -1.0}
+    rhoISprod = {v4 = 0.7}
+
+[rho.Fl4]
+    rhoIScons = {v4 = -1.0}
+    rhoISprod = {vl4 = 0.96}
+
+[rho.AgeBar15M4]
+    rhoIScons = {vl4 = -1.0}
+    rhoISprod = {va4 = 0.97}
 
 [rho.Cs4]
     rhoIScons = {va4 = -1.0}
-    rhoISprod = {Red2 = 1.0}
-
-[rho.Cs5]
-    rhoIScons = {va5 = -1.0}
-    rhoISprod = {White2 = 1.0}
-
-[rho.Cs6]
-    rhoIScons = {vl6 = -1.0}
-    rhoISprod = {Rose2 = 1.0}
-
-[rho.Cs7]
-    rhoIScons = {vl7 = -1.0}
-    rhoISprod = {Red3 = 1.0}
-
-[rho.Cs8]
-    rhoIScons = {va8 = -1.0}
-    rhoISprod = {White3 = 1.0}
-
-[rho.Cs9]
-    rhoIScons = {va9 = -1.0}
-    rhoISprod = {Rose3 = 1.0}
-
-[rho.Cs10]
-    rhoIScons = {va10 = -1.0}
     rhoISprod = {Red4 = 1.0}
 
-[rho.Cs11]
-    rhoIScons = {vl11 = -1.0}
-    rhoISprod = {White4 = 1.0}
+[rho.Fa5]
+    rhoIScons = {s_red = -1.0}
+    rhoISprod = {v5 = 0.7}
 
-[rho.Alm1]
-    rhoIScons = {Red1 = -1.0}
-    rhoISprod = {Red1 = 1.0}
+[rho.Fl5]
+    rhoIScons = {v5 = -1.0}
+    rhoISprod = {vl5 = 0.96}
 
-[rho.Alm2]
-    rhoIScons = {White1 = -1.0}
-    rhoISprod = {White1 = 1.0}
-
-[rho.Alm3]
-    rhoIScons = {Rose1 = -1.0}
-    rhoISprod = {Rose1 = 1.0}
-
-[rho.Alm4]
-    rhoIScons = {Red2 = -1.0}
-    rhoISprod = {Red2 = 1.0}
-
-[rho.Alm5]
-    rhoIScons = {White2 = -1.0}
-    rhoISprod = {White2 = 1.0}
-
-[rho.Alm6]
-    rhoIScons = {Rose2 = -1.0}
-    rhoISprod = {Rose2 = 1.0}
-
-[rho.AgeBarShort1]
-    rhoIScons = {vl1 = -1.0}
-    rhoISprod = {va1 = 0.99}
-
-[rho.AgeJarShort4]
-    rhoIScons = {vl4 = -1.0}
-    rhoISprod = {va4 = 0.99}
-
-[rho.AgeBarShort5]
+[rho.AgeJar4M5]
     rhoIScons = {vl5 = -1.0}
     rhoISprod = {va5 = 0.99}
 
-[rho.AgeJarMedium8]
+[rho.Cs5]
+    rhoIScons = {va5 = -1.0}
+    rhoISprod = {Red5 = 1.0}
+
+[rho.Pr6]
+    rhoIScons = {s_white_rose = -1.0}
+    rhoISprod = {m6 = 0.7, dsch = 0.3}
+
+[rho.Fa6]
+    rhoIScons = {m6 = -1.0}
+    rhoISprod = {v6 = 1.0}
+
+[rho.Cs6]
+    rhoIScons = {v6 = -1.0}
+    rhoISprod = {Rose1 = 1.0}
+
+[rho.Pr7]
+    rhoIScons = {s_white_rose = -1.0}
+    rhoISprod = {m7 = 0.7, dsch = 0.3}
+
+[rho.Fa7]
+    rhoIScons = {m7 = -1.0}
+    rhoISprod = {v7 = 1.0}
+
+[rho.AgeJar1M7]
+    rhoIScons = {v7 = -1.0}
+    rhoISprod = {va7 = 0.998}
+
+[rho.Cs7]
+    rhoIScons = {va7 = -1.0}
+    rhoISprod = {Rose2 = 1.0}
+
+[rho.Pr8]
+    rhoIScons = {s_white_rose = -1.0}
+    rhoISprod = {m8 = 0.7, dsch = 0.3}
+
+[rho.Fa8]
+    rhoIScons = {m8 = -1.0}
+    rhoISprod = {v8 = 1.0}
+
+[rho.Cs8]
     rhoIScons = {v8 = -1.0}
-    rhoISprod = {va8 = 0.985}
+    rhoISprod = {White1 = 1.0}
 
-[rho.AgeJarShort9]
+[rho.Pr9]
+    rhoIScons = {s_white_rose = -1.0}
+    rhoISprod = {m9 = 0.7, dsch = 0.3}
+
+[rho.Fa9]
+    rhoIScons = {m9 = -1.0}
+    rhoISprod = {v9 = 1.0}
+
+[rho.AgeJar1M9]
     rhoIScons = {v9 = -1.0}
-    rhoISprod = {va9 = 0.99}
+    rhoISprod = {va9 = 0.998}
 
-[rho.AgeBarLong10]
+[rho.Cs9]
+    rhoIScons = {va9 = -1.0}
+    rhoISprod = {White2 = 1.0}
+
+[rho.Pr10]
+    rhoIScons = {s_white_rose = -1.0}
+    rhoISprod = {m10 = 0.7, dsch = 0.3}
+
+[rho.Fa10]
+    rhoIScons = {m10 = -1.0}
+    rhoISprod = {v10 = 1.0}
+
+[rho.Fl10]
+    rhoIScons = {v10 = -1.0}
+    rhoISprod = {vl10 = 0.96}
+
+[rho.AgeBar2M10]
     rhoIScons = {vl10 = -1.0}
-    rhoISprod = {va10 = 0.97}
+    rhoISprod = {va10 = 0.995}
+
+[rho.Cs10]
+    rhoIScons = {va10 = -1.0}
+    rhoISprod = {White3 = 1.0}
 
 # 8. Units
 #
@@ -534,9 +491,9 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     task_bounds = {Cs = [2000, 10000], Alm = [9500, 10000]}
 
 [units.barrique]
-    quantity = 100
-    task_bounds = {AgeBarShort = [225, 250], AgeBarLong = [225, 250]}
+    quantity = 85
+    task_bounds = {AgeBar2M = [225, 250], AgeBar4M = [225, 250], AgeBar9M = [225, 250], AgeBar11M = [225, 250], AgeBar15M = [225, 250]}
 
 [units.jar]
     quantity = 40
-    task_bounds = {AgeJarShort = [300, 350], AgeJarMedium = [300, 350]}
+    task_bounds = {AgeJar1M = [300, 350], AgeJar4M = [300, 350]}
