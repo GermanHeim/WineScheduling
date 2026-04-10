@@ -316,11 +316,14 @@ def read_deadline_hours(toml_path: Path) -> float | None:
 
 
 def task_stage(task_name: str) -> str:
-    return "".join(ch for ch in task_name if ch.isalpha())
+    return task_name.rstrip("0123456789")
 
 
 def task_line(task_name: str) -> str:
-    return "".join(ch for ch in task_name if ch.isdigit())
+    i = len(task_name)
+    while i > 0 and task_name[i - 1].isdigit():
+        i -= 1
+    return task_name[i:]
 
 
 def task_stage_key(task_name: str) -> str:
@@ -338,18 +341,19 @@ def format_task_label(task_name: str, publish_mode: bool) -> str:
 
     stage = task_stage(task_name)
     line = task_line(task_name)
-    long_names = {
+    static_names = {
         "Fa": "Alcoholic Fermentation",
         "Fl": "Malolactic Fermentation",
-        "AgeBarShort": "Barrique Aging (4 months)",
-        "AgeBarLong": "Barrique Aging (18 months)",
-        "AgeJarShort": "Jar Aging (4 months)",
-        "AgeJarMedium": "Jar Aging (6 months)",
         "Alm": "Storage",
         "Cs": "Cold Stabilization",
     }
-    if stage in long_names and line:
-        return f"{long_names[stage]} ({line})"
+    if stage in static_names and line:
+        return f"{static_names[stage]} ({line})"
+    m_age = re.match(r"^Age(Bar|Jar)(\d+)M$", stage)
+    if m_age and line:
+        vessel = "Barrique" if m_age.group(1) == "Bar" else "Jar"
+        months = m_age.group(2)
+        return f"{vessel} Aging ({months} months) ({line})"
     return task_name
 
 
@@ -964,7 +968,8 @@ def plot_solution(
             if clip_end <= clip_start:
                 continue
 
-            is_long_aging = "Long" in t["task"]
+            _age_months_m = re.search(r"Age(?:Bar|Jar)(\d+)M", t["task"])
+            is_long_aging = bool(_age_months_m) and int(_age_months_m.group(1)) > 5
             hatch = "////" if is_long_aging else None
             edge_color = "#5C3D1E" if is_long_aging else "white"
 
