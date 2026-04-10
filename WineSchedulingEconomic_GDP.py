@@ -72,10 +72,13 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     """Create and return the wine scheduling economic optimization model with GDP"""
 
     def task_stage(task_name):
-        return "".join(ch for ch in task_name if ch.isalpha())
+        return task_name.rstrip("0123456789")
 
     def task_line(task_name):
-        return "".join(ch for ch in task_name if ch.isdigit())
+        i = len(task_name)
+        while i > 0 and task_name[i - 1].isdigit():
+            i -= 1
+        return task_name[i:]
 
     def is_aging_stage(stage_name):
         return stage_name.startswith("Age")
@@ -186,10 +189,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     jar_units_ordered = sorted(model.JJAR, key=unit_order_key)
 
     model.nJST = pyo.Param(initialize=len(model.JST))
-    model.inv_nJST = pyo.Param(initialize=1 / len(model.JST))
-
-    if len(storage_units) == 0:
-        raise ValueError("No storage units found with 'Alm' in [units.*.task_bounds]")
+    model.inv_nJST = pyo.Param(initialize=1 / len(model.JST) if len(model.JST) > 0 else 0.0)
 
     # Task-unit pairs (ij)
     ij_data = []
