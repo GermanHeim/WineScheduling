@@ -536,11 +536,26 @@ Because of persistence (A15), once a storage assignment is activated, $y_{i,j,n}
 
 $$ Penalty_{air} = c^{air} \cdot \frac{1}{\overline{\Delta B}} \cdot \sum_{j\in JST} Freespace_j $$
 
-Cooling cost for exterior tanks (bilinear, requires Gurobi `NonConvex=2`): For non-storage tasks the hull transformation enforces $Tf_{i,n} - Ts_{i,n} = \alpha_i W_{i,n} + \beta_i b_{i,n}$ globally, so the expression is substituted to eliminate $Tf$ and $Ts$:
+Cooling cost for exterior tanks is modeled as a MILP.
 
-$$CoolingCost = c^{cool} \cdot \sum_{\substack{j \in J^{ext} \\ (i,j) \in IJ}} \sum_{n \in N} \begin{cases} \alpha_i \, b_{i,j,n} \, W_{i,n} + \beta_i \, b_{i,j,n} \, b_{i,n} & i \in I^{nst} \\ b_{i,j,n} \cdot (Tf_{i,n} - Ts_{i,n}) & i \in I^{st} \end{cases}$$
+For non-storage tasks ($i \in I^{nst}$), the model introduces:
 
-This replaces bilinear products with $Tf, Ts \in [0, H]$ by products with $W \in [0,1]$ and $b \in [0, b^{ub}_i]$, tightening the McCormick envelope and improving Gurobi's spatial branch-and-bound bound quality.
+$$ z_{i,j,n} = b_{i,j,n} \cdot W_{i,n} $$
+
+with exact linearization (because $W_{i,n}$ is binary):
+
+$$ 0 \le z_{i,j,n} \le b_{i,j,n} $$
+
+$$ z_{i,j,n} \ge b_{i,j,n} - B^{max}_{i,j}(1 - W_{i,n}) $$
+
+$$ z_{i,j,n} \le B^{max}_{i,j} W_{i,n} $$
+
+The non-storage cooling contribution is then:
+
+$$ c^{cool} \sum_{\substack{(i,j) \in IJ \\ j \in J^{ext} \\ i \in I^{nst}}} \sum_{n \in N} \left( \alpha_i z_{i,j,n} + \beta_i b_{i,j,n} b_{i,n} \right) $$
+
+Storage cooling associated with $Alm$ tasks ($i \in I^{st}$) is intentionally excluded from the objective in the current formulation.
+
 
 Profit-maximization objective:
 
