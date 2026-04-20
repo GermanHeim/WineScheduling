@@ -1130,16 +1130,49 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         )
     )
 
+    # Exact linearization of alpha[i] * bj[i,j,n] * W[i,n] for non-storage tasks.
+    # W is binary, so the McCormick envelope is exact at integer points.
+    model.alpha_cooling_index = pyo.Set(
+        dimen=3,
+        initialize=[
+            (i, j, n)
+            for i in model.inst
+            for j in model.j
+            for n in model.n
+            if (i, j) in model.ij
+        ],
+    )
+    model.zAlphaCooling = pyo.Var(model.alpha_cooling_index, domain=pyo.NonNegativeReals)
+
+    model.AlphaCoolingLin_lb = pyo.Constraint(
+        model.alpha_cooling_index,
+        rule=lambda m, i, j, n: m.zAlphaCooling[i, j, n]
+        >= m.bj[i, j, n]
+        - m.Bmax[i, j] * (1 - active_disjuncts[i, n].binary_indicator_var),
+    )
+    model.AlphaCoolingLin_ub_bj = pyo.Constraint(
+        model.alpha_cooling_index,
+        rule=lambda m, i, j, n: m.zAlphaCooling[i, j, n] <= m.bj[i, j, n],
+    )
+    model.AlphaCoolingLin_ub_w = pyo.Constraint(
+        model.alpha_cooling_index,
+        rule=lambda m, i, j, n: m.zAlphaCooling[i, j, n]
+        <= m.Bmax[i, j] * active_disjuncts[i, n].binary_indicator_var,
+    )
+
     # For non-storage tasks the hull transformation enforces globally:
     #   Tf[i,n] - Ts[i,n] = alpha[i]*W[i,n] + beta[i]*b[i,n]
     # Substituting eliminates Tf and Ts from the bilinear product, replacing
     # variables with range [0, H] with W in [0,1] and b in [0,b_ub].
     def cooling_term(i, j, n):
-        W = active_disjuncts[i, n].binary_indicator_var
         bj = model.bj[i, j, n]
         if i in model.inst:
-            return model.alpha[i] * bj * W + model.beta[i] * bj * model.b[i, n]
-        return bj * (model.Tf[i, n] - model.Ts[i, n])
+            return (
+                model.alpha[i] * model.zAlphaCooling[i, j, n]
+                + model.beta[i] * bj * model.b[i, n]
+            )
+        # Exclude Alm storage cooling from the objective to keep a MILP model.
+        return 0.0
 
     model.CoolingCost = pyo.Expression(
         expr=model.costCooling
