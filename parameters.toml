@@ -202,8 +202,8 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 #
 # Pressing (Pr)
 [templates.Pr]
-    alpha = 8.0
-    beta = 0.0
+    alpha = 1.0
+    beta = 0.004 # 1 h/250 L
     compatible_units = ["press"]
 
 # Fermentation (Fa)

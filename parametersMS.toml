@@ -180,13 +180,13 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 #
 # Pressing (Pr)
 [templates.Pr]
-    alpha = 8.0
-    beta = 0.0
+    alpha = 1.0
+    beta = 0.004 # 1 h/250 L
     compatible_units = ["press"]
 
 # Fermentation (Fa)
 [templates.Fa]
-    alpha = 240.0  # Duration
+    alpha = 240.0
     beta = 0.0
     compatible_units = ["inox5000", "inox10000", "inox17500", "inox22000"]
 
