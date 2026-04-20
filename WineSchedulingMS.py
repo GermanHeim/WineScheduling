@@ -29,10 +29,13 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     """Create and return the wine scheduling optimization model"""
 
     def task_stage(task_name):
-        return "".join(ch for ch in task_name if ch.isalpha())
+        return task_name.rstrip("0123456789")
 
     def task_line(task_name):
-        return "".join(ch for ch in task_name if ch.isdigit())
+        i = len(task_name)
+        while i > 0 and task_name[i - 1].isdigit():
+            i -= 1
+        return task_name[i:]
 
     # Load parameters from TOML file
     with open(toml_file, "rb") as f:
