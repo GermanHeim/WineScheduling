@@ -93,7 +93,7 @@
 # 'ST0': Initial Stock at Time = 0
 [initial_inventory]
     s_red = 655000
-    s_white_rose = 1414137
+    s_white_rose = 2000000
 
 # 4. Upper Bounds for the Model
 #
@@ -257,31 +257,31 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 
 [rho.Pr2]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m2 = 0.7, dsch = 0.3}
+    rhoISprod = {m2 = 0.5, dsch = 0.5}
 
 [rho.Pr3]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m3 = 0.7, dsch = 0.3}
+    rhoISprod = {m3 = 0.5, dsch = 0.5}
 
 [rho.Pr5]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m5 = 0.7, dsch = 0.3}
+    rhoISprod = {m5 = 0.5, dsch = 0.5}
 
 [rho.Pr6]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m6 = 0.7, dsch = 0.3}
+    rhoISprod = {m6 = 0.5, dsch = 0.5}
 
 [rho.Pr8]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m8 = 0.7, dsch = 0.3}
+    rhoISprod = {m8 = 0.5, dsch = 0.5}
 
 [rho.Pr9]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m9 = 0.7, dsch = 0.3}
+    rhoISprod = {m9 = 0.5, dsch = 0.5}
 
 [rho.Pr11]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m11 = 0.7, dsch = 0.3}
+    rhoISprod = {m11 = 0.5, dsch = 0.5}
 
 [rho.Fl1]
     rhoIScons = {v1 = -1.0}
@@ -394,7 +394,7 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 # - task_bounds.<Task>: [Bmin, Bmax] for each compatible task
 [units.press]
     quantity = 1
-    task_bounds = {Pr = [500, 16000]}
+    task_bounds = {Pr = [500, 21000]}
 
 [units.inox5000]
     quantity = 1
