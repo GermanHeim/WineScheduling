@@ -359,7 +359,7 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 
 [rho.Pr6]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m6 = 0.5, dsch = 0.5}
+    rhoISprod = {m6 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa6]
     rhoIScons = {m6 = -1.0}
@@ -371,7 +371,7 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 
 [rho.Pr7]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m7 = 0.5, dsch = 0.5}
+    rhoISprod = {m7 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa7]
     rhoIScons = {m7 = -1.0}
@@ -387,7 +387,7 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 
 [rho.Pr8]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m8 = 0.5, dsch = 0.5}
+    rhoISprod = {m8 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa8]
     rhoIScons = {m8 = -1.0}
@@ -399,7 +399,7 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 
 [rho.Pr9]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m9 = 0.5, dsch = 0.5}
+    rhoISprod = {m9 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa9]
     rhoIScons = {m9 = -1.0}
@@ -415,7 +415,7 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 
 [rho.Pr10]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m10 = 0.5, dsch = 0.5}
+    rhoISprod = {m10 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa10]
     rhoIScons = {m10 = -1.0}

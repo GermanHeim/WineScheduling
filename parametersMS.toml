@@ -257,31 +257,31 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 
 [rho.Pr2]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m2 = 0.5, dsch = 0.5}
+    rhoISprod = {m2 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Pr3]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m3 = 0.5, dsch = 0.5}
+    rhoISprod = {m3 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Pr5]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m5 = 0.5, dsch = 0.5}
+    rhoISprod = {m5 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Pr6]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m6 = 0.5, dsch = 0.5}
+    rhoISprod = {m6 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Pr8]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m8 = 0.5, dsch = 0.5}
+    rhoISprod = {m8 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Pr9]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m9 = 0.5, dsch = 0.5}
+    rhoISprod = {m9 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Pr11]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m11 = 0.5, dsch = 0.5}
+    rhoISprod = {m11 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fl1]
     rhoIScons = {v1 = -1.0}
