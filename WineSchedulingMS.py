@@ -98,7 +98,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             )
         line_product[line] = cfg["product"]
         for step in cfg["steps"]:
-            tasks.append(f"{step}{line}")
+            if step == "Pr":
+                if "Pr" not in tasks:
+                    tasks.append("Pr")
+            else:
+                tasks.append(f"{step}{line}")
 
     # Derived line groups (used for states, ICS/IPS and tc1)
     no_fl_lines = {l for l, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
@@ -201,8 +205,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         raw_states.add(raw_state)
         if raw_state not in states:
             states.append(raw_state)
-        if "Pr" in cfg["steps"]:
-            states.append(f"m{line}")
+        if "Pr" in cfg["steps"] and "m" not in states:
+            states.append("m")
         states.append(f"v{line}")
         if "Fl" in cfg["steps"]:
             states.append(f"vl{line}")
@@ -216,8 +220,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         line = task_line(task)
         stage = task_stage(task)
         if stage == "Pr":
-            ICS_data.append((task, line_raw_state[line]))
-            IPS_data.append((task, f"m{line}"))
+            ICS_data.append((task, "s_white_rose"))
+            IPS_data.append((task, "m"))
             IPS_data.append((task, "dsch"))
         elif stage == "Fa":
             if "Pr" in lines_cfg[line]["steps"]:
@@ -268,7 +272,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Zero wait states (after Pr and Fa)
     model.SZW = pyo.Set(
         initialize=[f"v{l}" for l in lines]
-        + [f"m{l}" for l in lines if "Pr" in lines_cfg[l]["steps"]]
+        + (["m"] if any("Pr" in lines_cfg[l]["steps"] for l in lines) else [])
     )
 
     # No intermediate storage states (after Fl, before Cs)
@@ -284,6 +288,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             next_task = f"{steps[idx + 1]}{line}"
             if steps[idx + 1] == "Alm":
                 tc2_data.append((current_task, next_task))
+            elif steps[idx] == "Pr" and steps[idx + 1] == "Fa":
+                pass
             else:
                 tc1_data.append((current_task, next_task))
     model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
@@ -306,6 +312,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.jMaxST = pyo.Param(initialize=global_cfg.get("jMaxST", 2))
     model.jMinST = pyo.Param(initialize=global_cfg.get("jMinST", 1))
     model.MustUseEcobulk = pyo.Param(initialize=global_cfg.get("MustUseEcobulk", 0))
+    model.task_imax = pyo.Param(
+        model.inst, mutable=True, initialize=lambda m, i: m.iMax
+    )
+    if "Pr" in model.inst:
+        model.task_imax["Pr"] = sum(1 for l in lines if "Pr" in lines_cfg[l]["steps"])
 
     # Initial state quantities
     model.ST0 = pyo.Param(model.s, initialize=params["initial_inventory"], default=0)
@@ -651,9 +662,9 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # Global lower bound for makespan (longest line path)
     min_makespan = max(
         sum(
-            pyo.value(model.alpha[f"{step}{line}"])
+            pyo.value(model.alpha["Pr" if step == "Pr" else f"{step}{line}"])
             for step in cfg["steps"]
-            if f"{step}{line}" in model.i
+            if ("Pr" if step == "Pr" else f"{step}{line}") in model.i
         )
         for line, cfg in lines_cfg.items()
     )
@@ -841,7 +852,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Maximum activations per normal task (A06)
     def A06_rule(model, i):
-        return sum(model.W[i, n] for n in model.n) <= model.iMax
+        return sum(model.W[i, n] for n in model.n) <= model.task_imax[i]
 
     model.A06 = pyo.Constraint(model.A06_indices, rule=A06_rule)
 
