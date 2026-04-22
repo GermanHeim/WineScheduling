@@ -225,7 +225,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             IPS_data.append((task, "dsch"))
         elif stage == "Fa":
             if "Pr" in lines_cfg[line]["steps"]:
-                ICS_data.append((task, f"m{line}"))
+                ICS_data.append((task, "m"))
             else:
                 ICS_data.append((task, line_raw_state[line]))
             IPS_data.append((task, f"v{line}"))
