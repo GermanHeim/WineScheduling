@@ -249,7 +249,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     )
     model.SZW = pyo.Set(
         initialize=[f"v{l}" for l in lines]
-        + [f"m{l}" for l in lines if "Pr" in lines_cfg[l]["steps"]]
+        + (["m"] if any("Pr" in lines_cfg[l]["steps"] for l in lines) else [])
     )
     model.SNIS = pyo.Set(initialize=[f"vl{l}" for l in lines if l not in no_fl_lines])
 
