@@ -400,11 +400,11 @@ def build_collapsed_unit_groups(
         unit_to_rep  : maps each unit name to the group representative unit name.
         rep_to_info  : maps representative -> (first_unit, last_unit, count).
     """
-    unit_intervals: dict[str, list[tuple[float, float]]] = {}
+    unit_intervals: dict[str, list[tuple[str, float, float]]] = {}
     for t in tasks:
         for u in t["units"]:
             name = u["unit"]
-            interval = (t["start"], t["end"])
+            interval = (t["task"], t["start"], t["end"])
             if name not in unit_intervals:
                 unit_intervals[name] = []
             if interval not in unit_intervals[name]:
