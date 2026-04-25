@@ -36,8 +36,8 @@ TASK_COLORS: dict[str, str] = {
     "Alm": "#9B7EC8",  # storage
 }
 
-# Unit order for the y-axis
-UNIT_ORDER: list[str] = [
+# Unit order for the y-axis (makespan models)
+UNIT_ORDER_MS: list[str] = [
     "press",
     "inox5000",
     "inox10000",
@@ -50,6 +50,22 @@ UNIT_ORDER: list[str] = [
     "subte12700",
     "iso5000",
     "iso10000",
+]
+
+# Unit order for the y-axis (economic model)
+UNIT_ORDER_ECONOMIC: list[str] = [
+    "press",
+    "inox_ext_5000v#1",
+    "inox_ext_10000#1",
+    "inox_ext_10000#2",
+    "subte_6200",
+    "subte_9500",
+    "iso_ext_5000",
+    "iso_ext_10000",
+    "barrique [1]",
+    "barrique [2]",
+    "barrique [3]",
+    "jar [1]",
 ]
 
 UNIT_GROUP_LABELS: dict[str, str] = {
@@ -65,6 +81,17 @@ UNIT_GROUP_LABELS: dict[str, str] = {
     "subte12700": "Subterranean tanks",
     "iso5000": "Isothermal tanks",
     "iso10000": "Isothermal tanks",
+    "inox_ext_5000v#1": "Inox tanks",
+    "inox_ext_10000#1": "Inox tanks",
+    "inox_ext_10000#2": "Inox tanks",
+    "subte_6200": "Subterranean tanks",
+    "subte_9500": "Subterranean tanks",
+    "iso_ext_5000": "Isothermal tanks",
+    "iso_ext_10000": "Isothermal tanks",
+    "barrique [1]": "Barrique pool",
+    "barrique [2]": "Barrique pool",
+    "barrique [3]": "Barrique pool",
+    "jar [1]": "Jar pool",
 }
 
 
@@ -89,9 +116,48 @@ def parse_results(filepath: str) -> dict:
     else:
         tasks = parse_task_schedule(text)
 
+    for t in tasks:
+        for u in t["units"]:
+            m = re.match(r"^(barrique|jar)x(\d+)$", u["unit"])
+            if m:
+                count = int(m.group(2))
+                u["unit"] = m.group(1)
+                u["pool_count"] = count
+                u["batch"] = round(u["batch"] * count, 2)
+
+    pool_lane_counts: dict[str, int] = {}
+
+    def assign_pool_lanes(tasks: list[dict], pool: str) -> None:
+        pool_entries = [(t, u) for t in tasks for u in t["units"] if u["unit"] == pool]
+        pool_entries.sort(key=lambda x: x[0]["start"])
+        lane_ends: list[float] = []
+        for t, u in pool_entries:
+            lane = next(
+                (i for i, end in enumerate(lane_ends) if t["start"] >= end - 1e-6),
+                len(lane_ends),
+            )
+            if lane == len(lane_ends):
+                lane_ends.append(t["end"])
+            else:
+                lane_ends[lane] = t["end"]
+            lane_name = f"{pool} [{lane + 1}]"
+            pool_count = int(u.get("pool_count", 0) or 0)
+            if pool_count > 0:
+                pool_lane_counts[lane_name] = max(
+                    pool_lane_counts.get(lane_name, 0), pool_count
+                )
+            u["unit"] = lane_name
+
+    assign_pool_lanes(tasks, "barrique")
+    assign_pool_lanes(tasks, "jar")
+
     meta["tasks"] = tasks
+    meta["pool_lane_counts"] = pool_lane_counts
     meta["wine_metadata"] = parse_wine_metadata(text)
     meta["production"] = parse_production(text)
+    discard_map = parse_discard_data(text)
+    for entry in meta["production"]:
+        entry.setdefault("discarded", discard_map.get(entry["product"], 0.0))
     return meta
 
 
@@ -116,10 +182,16 @@ def parse_metadata(text: str) -> dict:
     obj = re.search(r"(?:Objective Value|Total Profit)\s*[:$\s]*([\d.,]+)", text)
     meta["objective"] = float(obj.group(1).replace(",", "")) if obj else None
 
+    meta["profit"] = parse_metric(r"Profit\s*[:$\s]*([-\d.,]+)")
     meta["revenue"] = parse_metric(r"Revenue\s*[:$\s]*([\d.,]+)")
+    meta["grape_skin_revenue"] = parse_metric(r"Grape Skin Revenue\s*[:$\s]*([\d.,]+)")
     meta["outsourcing_cost"] = parse_metric(r"Outsourcing Cost\s*[:$\s]*([\d.,]+)")
     meta["raw_material_cost"] = parse_metric(r"Raw Material Cost\s*[:$\s]*([\d.,]+)")
     meta["lateness_cost"] = parse_metric(r"Lateness Cost\s*[:$\s]*([\d.,]+)")
+    meta["penalty_empty_tank"] = parse_metric(r"Penalty Empty Tank\s*[:$\s]*([\d.,]+)")
+    meta["penalty_air_space"] = parse_metric(r"Penalty Air Space\s*[:$\s]*([\d.,]+)")
+    meta["penalty_makespan"] = parse_metric(r"Penalty Makespan\s*[:$\s]*([\d.,]+)")
+    meta["cooling_cost"] = parse_metric(r"Cooling Cost\s*[:$\s]*([\d.,]+)")
 
     ms = re.search(r"Makespan:\s*([\d.]+)\s*hours", text)
     meta["makespan"] = float(ms.group(1)) if ms else None
@@ -147,6 +219,24 @@ def parse_wine_metadata(text: str) -> dict[str, dict[str, str]]:
         wine_map[product] = {"name": name, "category": category}
 
     return wine_map
+
+
+def parse_discard_data(text: str) -> dict[str, float]:
+    discard_map: dict[str, float] = {}
+    section = re.search(r"DISCARD DATA.*?\n[-]+\n(.*?)(?:\n={5,}|\Z)", text, re.DOTALL)
+    if not section:
+        return discard_map
+    for line in section.group(1).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(",", 1)
+        if len(parts) == 2:
+            try:
+                discard_map[parts[0].strip()] = float(parts[1].strip())
+            except ValueError:
+                pass
+    return discard_map
 
 
 def parse_txt(section_text: str) -> list[dict]:
@@ -357,12 +447,15 @@ def format_task_label(task_name: str, publish_mode: bool) -> str:
     return task_name
 
 
-def format_unit_label(unit_name: str, publish_mode: bool) -> str:
+def format_unit_label(
+    unit_name: str, publish_mode: bool, pool_count: int | None = None
+) -> str:
     """Return a display label for units, expanded in publish mode."""
-    if not publish_mode:
-        return unit_name
-
-    UNIT_PUBLISH_NAMES: dict[str, str] = {"press": "Press"}
+    UNIT_PUBLISH_NAMES: dict[str, str] = {
+        "press": "Press",
+        "barrique": "Barrique Pool",
+        "jar": "Jar Pool",
+    }
     if unit_name in UNIT_PUBLISH_NAMES:
         return UNIT_PUBLISH_NAMES[unit_name]
 
@@ -371,6 +464,35 @@ def format_unit_label(unit_name: str, publish_mode: bool) -> str:
         family = m.group(1).lower().capitalize()
         capacity = m.group(2)
         return f"{family} {capacity}"
+
+    m = re.match(
+        r"^(inox|subte|iso)_ext_(\d+)(v)?(?:#(\d+))?$", unit_name, re.IGNORECASE
+    )
+    if m:
+        family_raw = m.group(1).lower()
+        family = {
+            "inox": "Inox",
+            "subte": "Subterranean",
+            "iso": "Isothermal",
+        }.get(family_raw, family_raw.capitalize())
+        capacity = m.group(2)
+        is_variable = bool(m.group(3))
+        idx = m.group(4)
+        cap_label = f"{capacity}V" if is_variable else capacity
+        return f"{family} {cap_label} #{idx}" if idx else f"{family} {cap_label}"
+
+    m = re.match(r"^subte_(\d+)$", unit_name, re.IGNORECASE)
+    if m:
+        return f"Subterranean {m.group(1)}"
+
+    m = re.match(r"^(barrique|jar)\s*\[(\d+)\]$", unit_name, re.IGNORECASE)
+    if m:
+        family = "Barrique" if m.group(1).lower() == "barrique" else "Jar"
+        lane = m.group(2)
+        count_suffix = f" (x{pool_count})" if pool_count and pool_count > 0 else ""
+        if publish_mode:
+            return f"{family} pool {lane}{count_suffix}"
+        return f"{family} {lane}{count_suffix}"
 
     m = re.match(r"^(.+)#(\d+)$", unit_name)
     if m:
@@ -449,15 +571,21 @@ def parse_stn_data(toml_file: str) -> dict:
 
     tasks = []
     line_product = {}
+    shared_tasks_added: set[str] = set()
     for line, cfg in lines_cfg.items():
         line_product[line] = cfg["product"]
         for step in cfg["steps"]:
-            tasks.append(f"{step}{line}")
+            if step == "Pr":
+                if "Pr" not in shared_tasks_added:
+                    tasks.append("Pr")
+                    shared_tasks_added.add("Pr")
+            else:
+                tasks.append(f"{step}{line}")
 
     states: set[str] = {"dsch"}
     for line, cfg in lines_cfg.items():
         if "Pr" in cfg["steps"]:
-            states.add(f"m{line}")
+            states.add("m")
         states.add(f"v{line}")
         if "Fl" in cfg["steps"]:
             states.add(f"vl{line}")
@@ -544,24 +672,44 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
     pos: dict[str, tuple[float, float]] = {}
 
     for task in tasks:
-        line = task_line(task)
         stage = task_stage_key(task)
-        pos[task] = (stage_x.get(stage, 3.0), y_by_line[line])
+        if task == "Pr":
+            pr_ys = [
+                y_by_line[l] for l in sorted_lines if "Pr" in lines_cfg[l]["steps"]
+            ]
+            y_pr = sum(pr_ys) / len(pr_ys) if pr_ys else 0.0
+            pos["Pr"] = (stage_x.get("Pr", 1.3), y_pr)
+        else:
+            line = task_line(task)
+            pos[task] = (stage_x.get(stage, 3.0), y_by_line[line])
 
     task_line_map = {task: task_line(task) for task in tasks}
+
+    pressing_lines = [ln for ln in sorted_lines if "Pr" in lines_cfg[ln]["steps"]]
 
     def state_connected_lines(state: str) -> list[str]:
         connected: list[str] = []
         for arc in arcs:
             if arc["src"] == state and arc["dst"] in task_line_map:
-                connected.append(task_line_map[arc["dst"]])
+                line = task_line_map[arc["dst"]]
+                if line in y_by_line:
+                    connected.append(line)
+                elif arc["dst"] == "Pr":
+                    connected.extend(pressing_lines)
             elif arc["dst"] == state and arc["src"] in task_line_map:
-                connected.append(task_line_map[arc["src"]])
-        return [line for line in connected if line in y_by_line]
+                line = task_line_map[arc["src"]]
+                if line in y_by_line:
+                    connected.append(line)
+                elif arc["src"] == "Pr":
+                    connected.extend(pressing_lines)
+        return connected
 
     for state in states:
         if state == "dsch":
             pos[state] = (6.8, 1.2)
+            continue
+        if state == "grape_skin":
+            pos[state] = (state_x["s"], -(len(sorted_lines) - 1) - 0.7)
             continue
 
         y_values: list[float] = []
@@ -797,15 +945,19 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
                 label="Upward red arrow: loss to dsch",
             )
         )
-    ax.legend(handles=legend_items, loc="lower left", fontsize=7, framealpha=0.9)
+    ax.legend(handles=legend_items, loc="upper left", fontsize=7, framealpha=0.9)
 
 
 def compute_xaxis_breaks(
-    tasks: list[dict], xmax: float, min_gap_fraction: float = 0.08
+    tasks: list[dict],
+    xmax: float,
+    min_gap_fraction: float = 0.08,
+    max_breaks: int | None = 2,
 ) -> list[tuple[float, float]]:
     """
     Return (break_start, break_end) intervals where no non-aging task is active
     and the gap exceeds min_gap_fraction * xmax (minimum 500 h).
+    If max_breaks is not None, keep only the largest max_breaks intervals.
     Only tasks whose name starts with 'Age' are treated as aging tasks.
     """
     min_gap = max(500.0, xmax * min_gap_fraction)
@@ -824,7 +976,7 @@ def compute_xaxis_breaks(
     events.sort()
     active = 0
     inactive_start: float | None = None
-    breaks: list[tuple[float, float]] = []
+    candidates: list[tuple[float, float, float]] = []
 
     for time, delta in events:
         prev = active
@@ -835,9 +987,17 @@ def compute_xaxis_breaks(
             gap = time - inactive_start
             if gap >= min_gap:
                 pad = min(gap * 0.03, 48.0)
-                breaks.append((inactive_start + pad, time - pad))
+                candidates.append((inactive_start + pad, time - pad, gap))
             inactive_start = None
 
+    if not candidates:
+        return []
+
+    if max_breaks is not None and max_breaks >= 0 and len(candidates) > max_breaks:
+        candidates = sorted(candidates, key=lambda x: x[2], reverse=True)[:max_breaks]
+        candidates.sort(key=lambda x: x[0])
+
+    breaks = [(b0, b1) for b0, b1, _ in candidates]
     return breaks
 
 
@@ -868,8 +1028,12 @@ def plot_solution(
     publish_mode: bool = False,
     no_title: bool = False,
     no_break: bool = False,
+    max_breaks: int | None = 2,
 ) -> None:
     tasks = data["tasks"]
+    model_name_l = str(data.get("model_name", "")).lower()
+    is_economic = "economic" in model_name_l
+
     if not tasks:
         ax.text(
             0.5,
@@ -883,6 +1047,7 @@ def plot_solution(
         return
 
     used_units = []
+    pool_lane_counts = data.get("pool_lane_counts", {})
     for t in tasks:
         for u in t["units"]:
             if u["unit"] not in used_units:
@@ -890,7 +1055,8 @@ def plot_solution(
 
     unit_to_rep, rep_to_info = build_collapsed_unit_groups(tasks)
 
-    ordered_units = [u for u in UNIT_ORDER if u in used_units]
+    unit_order = UNIT_ORDER_ECONOMIC if is_economic else UNIT_ORDER_MS
+    ordered_units = [u for u in unit_order if u in used_units]
     ordered_units += [u for u in used_units if u not in ordered_units]
 
     seen_reps: set[str] = set()
@@ -908,7 +1074,9 @@ def plot_solution(
     xmax = max(t["end"] for t in tasks) * 1.01
 
     # Build segments from x-axis breaks
-    breaks = [] if no_break else compute_xaxis_breaks(tasks, xmax)
+    breaks = (
+        [] if no_break else compute_xaxis_breaks(tasks, xmax, max_breaks=max_breaks)
+    )
     fig = ax.get_figure()
     assert fig is not None
 
@@ -937,8 +1105,8 @@ def plot_solution(
         axes = [ax]
         segments = [(0.0, xmax)]
 
-    best_seg: dict[tuple[str, str], int] = {}
-    best_seg_width: dict[tuple[str, str], float] = {}
+    best_seg: dict[tuple[str, int, str], int] = {}
+    best_seg_width: dict[tuple[str, int, str], float] = {}
     for seg_idx, (seg_start, seg_end) in enumerate(segments):
         for t in tasks:
             clip_w = min(t["end"], seg_end) - max(t["start"], seg_start)
@@ -946,10 +1114,42 @@ def plot_solution(
                 continue
             for u in t["units"]:
                 display_unit = unit_to_rep.get(u["unit"], u["unit"])
-                key = (t["task"], display_unit)
+                key = (t["task"], t["event"], display_unit)
                 if clip_w > best_seg_width.get(key, 0):
                     best_seg[key] = seg_idx
                     best_seg_width[key] = clip_w
+
+    def bar_size_px(
+        bar_ax: plt.Axes,
+        left: float,
+        right: float,
+        y_center: float,
+        height: float,
+    ) -> tuple[float, float]:
+        """Return (width_px, height_px) for a bar segment in display pixels."""
+        p0 = bar_ax.transData.transform((left, y_center - height / 2))
+        p1 = bar_ax.transData.transform((right, y_center + height / 2))
+        return abs(float(p1[0] - p0[0])), abs(float(p1[1] - p0[1]))
+
+    def text_box_px(text: str, fontsize: float, dpi: float) -> tuple[float, float]:
+        """Estimate text bounding box size in pixels for conservative fit checks."""
+        lines = text.split("\n")
+        max_chars = max((len(line) for line in lines), default=0)
+        char_w_px = (fontsize * dpi / 72.0) * 0.66
+        line_h_px = (fontsize * dpi / 72.0) * 1.30
+        width_px = max_chars * char_w_px + 8.0
+        height_px = len(lines) * line_h_px + 4.0
+        return width_px, height_px
+
+    def fits_in_bar(
+        text: str,
+        fontsize: float,
+        bar_w_px: float,
+        bar_h_px: float,
+        dpi: float,
+    ) -> bool:
+        text_w_px, text_h_px = text_box_px(text, fontsize, dpi)
+        return text_w_px <= bar_w_px * 0.82 and text_h_px <= bar_h_px * 0.78
 
     for seg_idx, (seg_ax, (seg_start, seg_end)) in enumerate(zip(axes, segments)):
         for t in tasks:
@@ -994,13 +1194,13 @@ def plot_solution(
                 )
 
                 # Label only in the segment with the largest visible clip
-                label_key = (t["task"], display_unit)
-                clipped_width = clip_end - clip_start
-                if (
-                    duration > 30
-                    and clipped_width > 30
-                    and best_seg.get(label_key) == seg_idx
-                ):
+                label_key = (t["task"], t["event"], display_unit)
+                if best_seg.get(label_key) == seg_idx:
+                    bar_w_px, bar_h_px = bar_size_px(
+                        seg_ax, clip_start, clip_end, yi, bar_height
+                    )
+                    clipped_width = clip_end - clip_start
+
                     label_x = t["start"] + duration / 2
                     if not (seg_start <= label_x <= seg_end):
                         label_x = (clip_start + clip_end) / 2
@@ -1010,13 +1210,26 @@ def plot_solution(
                         if display_unit in rep_to_info
                         else f"{u['batch']:.0f} L"
                     )
+
+                    # Aggressive filtering: label only major bars to avoid clutter.
+                    if clipped_width < 720 or bar_w_px < 260 or bar_h_px < 20:
+                        continue
+
+                    dpi = float(seg_ax.figure.dpi)
+                    two_line_text = f"{display_task}\n{batch_str}"
+                    if fits_in_bar(two_line_text, 6.5, bar_w_px, bar_h_px, dpi):
+                        label_text = two_line_text
+                        label_fs = 6.5
+                    else:
+                        continue
+
                     seg_ax.text(
                         label_x,
                         yi,
-                        f"{display_task}\n{batch_str}",
+                        label_text,
                         ha="center",
                         va="center",
-                        fontsize=6.5,
+                        fontsize=label_fs,
                         color="white",
                         fontweight="bold",
                         clip_on=True,
@@ -1026,12 +1239,20 @@ def plot_solution(
         if u in rep_to_info:
             first_unit, last_unit, count = rep_to_info[u]
             if publish_mode:
-                first_label = format_unit_label(first_unit, publish_mode)
-                last_label = format_unit_label(last_unit, publish_mode)
+                first_label = format_unit_label(
+                    first_unit,
+                    publish_mode,
+                    pool_lane_counts.get(first_unit),
+                )
+                last_label = format_unit_label(
+                    last_unit,
+                    publish_mode,
+                    pool_lane_counts.get(last_unit),
+                )
             else:
                 first_label, last_label = first_unit, last_unit
             return f"{first_label} - {last_label} (x{count})"
-        return format_unit_label(u, publish_mode)
+        return format_unit_label(u, publish_mode, pool_lane_counts.get(u))
 
     n_units = len(ordered_units)
     display_units = [make_ytick_label(u) for u in ordered_units]
@@ -1048,8 +1269,6 @@ def plot_solution(
             seg_ax.set_yticklabels([])
             seg_ax.tick_params(axis="y", length=0)
             seg_ax.spines["left"].set_visible(False)
-
-    is_economic = "economic" in str(data.get("model_name", "")).lower()
 
     def pick_hour_interval(width_h: float) -> tuple[int, int]:
         """Return (major, minor) hour tick intervals for a segment of given width."""
@@ -1108,16 +1327,15 @@ def plot_solution(
         if len(axes) == 1:
             axes[0].set_xlabel("Time (days)", fontsize=10)
         else:
-            ann = axes[0].annotate(
+            day_label = fig.text(
+                0.55,
+                -0.025,
                 "Time (days)",
-                xy=(0.5, -0.04),
-                xycoords=("figure fraction", "axes fraction"),
                 ha="center",
-                va="top",
+                va="bottom",
                 fontsize=10,
-                annotation_clip=False,
             )
-            ann.set_in_layout(False)
+            day_label.set_in_layout(True)
     else:
         if len(axes) == 1:
             axes[0].set_xlabel("Time (hours)", fontsize=10)
@@ -1197,21 +1415,37 @@ def plot_solution(
         title_parts.append(
             f"Makespan: {data['makespan']:.0f} h ({data['makespan'] / 24:.1f} days)"
         )
-    if data.get("objective") is not None:
-        title_parts.append(f"Obj: {data['objective']:.2f}")
-    if data.get("revenue") is not None:
-        title_parts.append(f"Revenue: {data['revenue']:.2f}")
     model_name_l = str(data.get("model_name", "")).lower()
     if "economic" in model_name_l:
+        if data.get("profit") is not None:
+            title_parts.append(f"Profit: {data['profit']:.2f}")
         econ_parts = []
+        if data.get("revenue") is not None:
+            econ_parts.append(f"Rev: {data['revenue']:.2f}")
+        if data.get("grape_skin_revenue") is not None:
+            econ_parts.append(f"GS Rev: {data['grape_skin_revenue']:.2f}")
         if data.get("outsourcing_cost") is not None:
-            econ_parts.append(f"Outsource Cost: {data['outsourcing_cost']:.2f}")
+            econ_parts.append(f"Outsource: -{data['outsourcing_cost']:.2f}")
         if data.get("raw_material_cost") is not None:
-            econ_parts.append(f"Raw Mat Cost: {data['raw_material_cost']:.2f}")
-        if data.get("lateness_cost") is not None:
-            econ_parts.append(f"Lateness Cost: {data['lateness_cost']:.2f}")
+            econ_parts.append(f"RawMat: -{data['raw_material_cost']:.2f}")
+        if data.get("lateness_cost") is not None and data["lateness_cost"] > 0:
+            econ_parts.append(f"Lateness: -{data['lateness_cost']:.2f}")
         if econ_parts:
             title_parts.append("; ".join(econ_parts))
+        penalty_parts = []
+        if data.get("penalty_empty_tank") is not None:
+            penalty_parts.append(f"EmptyTank: -{data['penalty_empty_tank']:.2f}")
+        if data.get("penalty_air_space") is not None:
+            penalty_parts.append(f"AirSpace: -{data['penalty_air_space']:.2f}")
+        if data.get("penalty_makespan") is not None:
+            penalty_parts.append(f"MS: -{data['penalty_makespan']:.2f}")
+        if penalty_parts:
+            title_parts.append("Penalties: " + "; ".join(penalty_parts))
+    else:
+        if data.get("objective") is not None:
+            title_parts.append(f"Obj: {data['objective']:.2f}")
+        if data.get("revenue") is not None:
+            title_parts.append(f"Revenue: {data['revenue']:.2f}")
     if data.get("unused_units") is not None:
         title_parts.append(f"Unused tanks: {data['unused_units']}")
     if not no_title and title_parts:
@@ -1225,8 +1459,16 @@ def plot_solution(
 # Production bar chart
 def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
     production = data.get("production", [])
-    if not show_dsch:
-        production = [p for p in production if p.get("product", "").lower() != "dsch"]
+
+    byproduct_keys = {"dsch", "grape_skin"}
+    main_prod = [p for p in production if p.get("product") not in byproduct_keys]
+    byproducts: list[dict] = []
+    if show_dsch:
+        for _key in ("dsch", "grape_skin"):
+            _entry = next((p for p in production if p.get("product") == _key), None)
+            if _entry is not None:
+                byproducts.append(_entry)
+    production = main_prod + byproducts
 
     if not production:
         ax.text(
@@ -1242,9 +1484,16 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
         return
 
     wine_metadata = data.get("wine_metadata", {})
+    BYPRODUCT_LABELS: dict[str, str] = {
+        "dsch": "Discharge\n(dsch)",
+        "grape_skin": "Grape Skin\n(byproduct)",
+    }
     products = []
     for p in production:
         product_key = p["product"]
+        if product_key in BYPRODUCT_LABELS:
+            products.append(BYPRODUCT_LABELS[product_key])
+            continue
         meta = wine_metadata.get(product_key, {})
         wine_name = p.get("name") or meta.get("name", "")
         category = p.get("category") or meta.get("category", "")
@@ -1257,10 +1506,60 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
     produced = [p["produced"] for p in production]
     demand = [p["demand"] for p in production]
     outsourced = [p.get("outsourced", 0.0) for p in production]
+    discarded = [p.get("discarded", 0.0) for p in production]
     show_outsourced = any(v > 1e-9 for v in outsourced)
+    show_discarded = any(v > 1e-9 for v in discarded)
 
     x = range(len(products))
-    if show_outsourced:
+
+    PROD_COLOR = "#5B8DB8"
+    GS_COLOR = "#C8A97E"
+    prod_colors = [
+        GS_COLOR if p.get("product") == "grape_skin" else PROD_COLOR for p in production
+    ]
+
+    if show_outsourced and show_discarded:
+        width = 0.14
+        gap = 0.02
+        delta = width + gap
+        offsets = [-1.5 * delta, -0.5 * delta, 0.5 * delta, 1.5 * delta]
+        ax.bar(
+            [xi + offsets[0] for xi in x],
+            outsourced,
+            width,
+            label="Outsourced",
+            color="#E07B54",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        bars_prod = ax.bar(
+            [xi + offsets[1] for xi in x],
+            produced,
+            width,
+            label="Produced",
+            color=prod_colors,
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi + offsets[2] for xi in x],
+            discarded,
+            width,
+            label="Discarded",
+            color="#C0392B",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi + offsets[3] for xi in x],
+            demand,
+            width,
+            label="Demand",
+            color="#AAAAAA",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+    elif show_outsourced:
         width = 0.16
         gap = 0.02
         delta = width + gap
@@ -1278,7 +1577,38 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
             produced,
             width,
             label="Produced",
-            color="#5B8DB8",
+            color=prod_colors,
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi + delta for xi in x],
+            demand,
+            width,
+            label="Demand",
+            color="#AAAAAA",
+            edgecolor="white",
+            linewidth=0.6,
+        )
+    elif show_discarded:
+        width = 0.16
+        gap = 0.02
+        delta = width + gap
+        bars_prod = ax.bar(
+            [xi - delta for xi in x],
+            produced,
+            width,
+            label="Produced",
+            color=prod_colors,
+            edgecolor="white",
+            linewidth=0.6,
+        )
+        ax.bar(
+            [xi for xi in x],
+            discarded,
+            width,
+            label="Discarded",
+            color="#C0392B",
             edgecolor="white",
             linewidth=0.6,
         )
@@ -1300,7 +1630,7 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
             produced,
             width,
             label="Produced",
-            color="#5B8DB8",
+            color=prod_colors,
             edgecolor="white",
             linewidth=0.6,
         )
@@ -1317,22 +1647,51 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
     ax.set_xticks(list(x))
     ax.set_xticklabels(products, fontsize=9)
     ax.set_ylabel("Volume (L)", fontsize=10)
+    title_parts_prod = ["Final Production"]
     if show_outsourced:
-        ax.set_title("Final Production vs. Outsourced vs. Demand", fontsize=10)
-    else:
-        ax.set_title("Final Production vs. Demand", fontsize=10)
+        title_parts_prod.append("Outsourced")
+    if show_discarded:
+        title_parts_prod.append("Discarded")
+    title_parts_prod.append("Demand")
+    ax.set_title(" vs. ".join(title_parts_prod), fontsize=10)
     ax.legend(fontsize=8, framealpha=0.85)
     ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:,.0f}"))
     ax.set_axisbelow(True)
     ax.grid(axis="y", linestyle="--", linewidth=0.5, alpha=0.5)
 
-    y_max = max(max(produced), max(demand), max(outsourced) if outsourced else 0.0)
+    y_max = max(
+        max(produced) if produced else 0.0,
+        max(demand) if demand else 0.0,
+        max(outsourced) if show_outsourced else 0.0,
+        max(discarded) if show_discarded else 0.0,
+    )
     ax.set_ylim(0, y_max * 1.18)
-    for bar in bars_prod:
+
+    gs_rev = data.get("grape_skin_revenue")
+    gs_xi = next(
+        (i for i, p in enumerate(production) if p.get("product") == "grape_skin"),
+        None,
+    )
+
+    for bar_i, bar in enumerate(bars_prod):
         h = bar.get_height()
-        if h > 0:
+        if h <= 0:
+            continue
+        bar_cx = bar.get_x() + bar.get_width() / 2
+        if bar_i == gs_xi and gs_rev is not None:
             ax.text(
-                bar.get_x() + bar.get_width() / 2,
+                bar_cx,
+                h + y_max * 0.01,
+                f"{h:,.0f} L\n${gs_rev:,.0f}",
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                color="#7D6608",
+                rotation=45,
+            )
+        else:
+            ax.text(
+                bar_cx,
                 h + y_max * 0.01,
                 f"{h:,.0f}",
                 ha="center",
@@ -1343,16 +1702,21 @@ def plot_production(data: dict, ax: plt.Axes, show_dsch: bool = True) -> None:
 
 
 def build_output_path(
-    default_stem: str, override: str | None, default_ext: str, publish: bool
+    default_stem: str,
+    override: str | None,
+    default_ext: str,
+    publish: bool,
+    publish_ext: str = "eps",
 ) -> Path:
-    """Resolve output path and enforce EPS extension in publish mode."""
+    """Resolve output path and enforce publish extension in publish mode."""
     if override:
         out_path = Path(override)
     else:
         out_path = Path(f"{default_stem}.{default_ext}")
 
-    if publish and out_path.suffix.lower() != ".eps":
-        out_path = out_path.with_suffix(".eps")
+    expected_suffix = f".{publish_ext.lower()}"
+    if publish and out_path.suffix.lower() != expected_suffix:
+        out_path = out_path.with_suffix(expected_suffix)
     return out_path
 
 
@@ -1390,7 +1754,12 @@ def main():
     parser.add_argument(
         "--publish",
         action="store_true",
-        help="Publication mode: save figures as EPS files.",
+        help="Publication mode: save figures as EPS files (or SVG with --svg).",
+    )
+    parser.add_argument(
+        "--svg",
+        action="store_true",
+        help="With --publish, save figures as SVG instead of EPS.",
     )
     parser.add_argument(
         "--no-title",
@@ -1401,6 +1770,15 @@ def main():
         "--no-break",
         action="store_true",
         help="Disable X-axis breaks; show the full uncompressed timeline.",
+    )
+    parser.add_argument(
+        "--max-breaks",
+        type=int,
+        default=2,
+        help=(
+            "Maximum number of X-axis break intervals to keep (largest gaps). "
+            "Use 0 to disable breaks unless --no-break is set."
+        ),
     )
     parser.add_argument(
         "--stn",
@@ -1427,6 +1805,39 @@ def main():
         "--hide-dsch",
         action="store_true",
         help="Hide dsch from plots (production bar chart and STN dsch arrows).",
+    )
+    parser.add_argument(
+        "--fig-width",
+        type=float,
+        default=18.0,
+        help="Figure width in inches for Gantt and production plots (default: 18).",
+    )
+    parser.add_argument(
+        "--fig-height",
+        type=float,
+        default=None,
+        help=(
+            "Optional figure height in inches for the main Gantt figure "
+            "(default: 8 in publish mode, 10 otherwise)."
+        ),
+    )
+    parser.add_argument(
+        "--prod-height",
+        type=float,
+        default=5.0,
+        help="Figure height in inches for production-only publish figure (default: 5).",
+    )
+    parser.add_argument(
+        "--stn-width",
+        type=float,
+        default=24.0,
+        help="Figure width in inches for STN plot (default: 24).",
+    )
+    parser.add_argument(
+        "--stn-height",
+        type=float,
+        default=10.0,
+        help="Figure height in inches for STN plot (default: 10).",
     )
     args = parser.parse_args()
 
@@ -1460,18 +1871,45 @@ def main():
 
     has_production = bool(data.get("production"))
 
+    main_width = args.fig_width
+    main_height = (
+        args.fig_height
+        if args.fig_height is not None
+        else (8.0 if args.publish else 10.0)
+    )
+
     if args.publish:
-        fig_main = plt.figure(figsize=(16, 8), layout="constrained")
+        fig_main = plt.figure(figsize=(main_width, main_height), layout="constrained")
+        fig_main.set_constrained_layout_pads(
+            w_pad=0.01,
+            h_pad=0.01,
+            wspace=0.02,
+            hspace=0.02,
+        )
         ax_gantt = fig_main.add_subplot(111)
 
         if has_production:
-            fig_prod = plt.figure(figsize=(16, 5), layout="constrained")
+            fig_prod = plt.figure(
+                figsize=(main_width, args.prod_height), layout="constrained"
+            )
+            fig_prod.set_constrained_layout_pads(
+                w_pad=0.01,
+                h_pad=0.01,
+                wspace=0.02,
+                hspace=0.02,
+            )
             ax_prod = fig_prod.add_subplot(111)
         else:
             fig_prod = None
             ax_prod = None
     else:
-        fig_main = plt.figure(figsize=(16, 10), layout="constrained")
+        fig_main = plt.figure(figsize=(main_width, main_height), layout="constrained")
+        fig_main.set_constrained_layout_pads(
+            w_pad=0.01,
+            h_pad=0.01,
+            wspace=0.02,
+            hspace=0.02,
+        )
         if has_production:
             gs = fig_main.add_gridspec(2, 1, height_ratios=[3, 1], hspace=0.1)
             ax_gantt = fig_main.add_subplot(gs[0])
@@ -1492,6 +1930,7 @@ def main():
         publish_mode=args.publish,
         no_title=args.no_title,
         no_break=args.no_break,
+        max_breaks=args.max_breaks,
     )
     if ax_prod is not None:
         plot_production(data, ax_prod, show_dsch=not args.hide_dsch)
@@ -1517,7 +1956,9 @@ def main():
                 color="gray",
             )
 
-    default_ext = "eps" if args.publish else "png"
+    default_ext = (
+        "svg" if args.publish and args.svg else "eps" if args.publish else "png"
+    )
     save_main_requested = (
         args.no_show
         or args.output is not None
@@ -1528,9 +1969,13 @@ def main():
     if save_main_requested:
         if args.publish:
             gantt_out = build_output_path(
-                f"{filepath.stem}_gantt", args.output, default_ext, args.publish
+                f"{filepath.stem}_gantt",
+                args.output,
+                default_ext,
+                args.publish,
+                publish_ext=default_ext,
             )
-            fig_main.savefig(gantt_out, dpi=800, bbox_inches="tight")
+            fig_main.savefig(gantt_out, dpi=800, bbox_inches="tight", pad_inches=0.02)
             print(f"Saved Gantt chart to {gantt_out}")
 
             if fig_prod is not None:
@@ -1539,8 +1984,11 @@ def main():
                     args.production_output,
                     default_ext,
                     args.publish,
+                    publish_ext=default_ext,
                 )
-                fig_prod.savefig(prod_out, dpi=800, bbox_inches="tight")
+                fig_prod.savefig(
+                    prod_out, dpi=800, bbox_inches="tight", pad_inches=0.02
+                )
                 print(f"Saved production chart to {prod_out}")
         else:
             prod_out = build_output_path(
@@ -1548,8 +1996,9 @@ def main():
                 args.output,
                 default_ext,
                 args.publish,
+                publish_ext=default_ext,
             )
-            fig_main.savefig(prod_out, dpi=800, bbox_inches="tight")
+            fig_main.savefig(prod_out, dpi=800, bbox_inches="tight", pad_inches=0.02)
             print(f"Saved combined chart to {prod_out}")
 
     if args.stn:
@@ -1558,14 +2007,20 @@ def main():
         if not toml_path.exists():
             print(f"Error: TOML file '{toml_path}' not found. STN graph skipped.")
         else:
-            fig_stn = plt.figure(figsize=(18, 10), layout="constrained")
+            fig_stn = plt.figure(
+                figsize=(args.stn_width, args.stn_height), layout="constrained"
+            )
             ax_stn = fig_stn.add_subplot(111)
             plot_stn_graph(str(toml_path), ax_stn, show_dsch=not args.hide_dsch)
             if args.no_show or args.stn_output or args.publish:
                 stn_out = build_output_path(
-                    f"{toml_path.stem}_stn", args.stn_output, default_ext, args.publish
+                    f"{toml_path.stem}_stn",
+                    args.stn_output,
+                    default_ext,
+                    args.publish,
+                    publish_ext=default_ext,
                 )
-                fig_stn.savefig(stn_out, dpi=450, bbox_inches="tight")
+                fig_stn.savefig(stn_out, dpi=450, bbox_inches="tight", pad_inches=0.02)
                 print(f"Saved STN graph to {stn_out}")
 
     if not (
