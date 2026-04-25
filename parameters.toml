@@ -5,32 +5,33 @@
 # 1. Global Settings - Time and Penalties
 [global]
     # The Horizon (total available hours in the model)
-    H = 15000  # hours
+    H = 16000  # hours
 
     # Number of event points
-    n_max = 6
+    n_max = 10
 
     # Target Deadline for the schedule and lateness penalty
-    deadline = 1560  # 65 days
+    deadline = 1560 # 65 days
     penaltyLate = 250 # Penalty for being late ($/hour delayed past deadline)
-
-    # =1 if the model forces wines using ecobulk to use some kind of tank for final storage
-    # =0 if it is optimized
-    MustUseEcobulk = 0
 
     # Technical penalty weights for profit optimization (all in USD)
     penaltyMaxUtilization = 100.0 # Penalty for not utilizing tanks fully
     penaltyEmptyTank = 5000.0     # Penalty for leaving tanks empty
     penaltyAir = 1000.0           # Penalty for leaving air in tanks
-    penaltyMS = 1.0               # Penalty per hour of makespan
-    costCooling = 1e-2            # Cooling cost for exterior tanks ($/(L h) of occupancy)
+    penaltyMS = 0.05              # Penalty per hour of makespan
+    costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
+    grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
+    penaltyDiscard = 5.0          # Cost per liter discarded (approx. raw material + basic processing cost)
 
     # Activation/unit assignment limits
     iMax = 1
+    # Max activations for young wine tasks.
+    # Set to 2 to model two production cycles of young wines from the same line within a single schedule.
+    iMaxYoungWine = 2
     jMax = 1
     jMin = 1
     iMaxST = 1
-    jMaxST = 2
+    jMaxST = 1
     jMinST = 1
 
 # 2. Products - Prices, Demand, Outsourcing Costs
@@ -38,13 +39,17 @@
 # 'name': Product Name
 # 'category': Wine style (Red, White, Rose)
 # 'demand': Demand (L)
+# 'price': Selling price per liter ($/L)
+# 'costOutsourcing': Cost to outsource production per liter ($/L)
+# 'outsourced': Whether the product can be outsourced (true/false)
 [products]
     [products.Red1]
         name = "Estenas madurado"
         category = "Red"
         demand = 3000
         price = 10.00
-        costOutsourcing = 16.0
+        costOutsourcing = 22.0
+        outsourced = false
 
     [products.Red2]
         name = "Estenas crianza"
@@ -52,6 +57,7 @@
         demand = 4000
         price = 15.00
         costOutsourcing = 22.0
+        outsourced = false
 
     [products.Red3]
         name = "Martínez Bermell"
@@ -59,62 +65,66 @@
         demand = 3500
         price = 18.00
         costOutsourcing = 26.0
+        outsourced = false
 
     [products.Red4]
         name = "Casa Don Ángel"
         category = "Red"
-        demand = 2500
+        demand = 5500
         price = 22.00
         costOutsourcing = 32.0
+        outsourced = false
 
     [products.Red5]
         name = "Para el bobal de Estenas"
         category = "Red"
-        demand = 2000
+        demand = 4000
         price = 14.00
-        costOutsourcing = 20.0
+        costOutsourcing = 28.0
 
     [products.Rose1]
         name = "Estenas Rosado"
         category = "Rose"
-        demand = 5000
+        demand = 10000  # 2x: two production cycles (iMaxYoungWine = 2)
         price = 7.00
-        costOutsourcing = 11.0
+        costOutsourcing = 18.0
 
     [products.Rose2]
         name = "El rosado de Estenas"
         category = "Rose"
-        demand = 3000
+        demand = 6000   # 2x: two production cycles (iMaxYoungWine = 2)
         price = 11.00
-        costOutsourcing = 16.0
+        costOutsourcing = 21.0
 
     [products.White1]
         name = "Estenas blanco"
         category = "White"
-        demand = 5000
+        demand = 10000  # 2x: two production cycles (iMaxYoungWine = 2)
         price = 7.00
-        costOutsourcing = 11.0
+        costOutsourcing = 18.0
+        outsourced = false
 
     [products.White2]
         name = "La tardana de estenas"
         category = "White"
-        demand = 3000
+        demand = 6000   # 2x: two production cycles (iMaxYoungWine = 2)
         price = 11.00
-        costOutsourcing = 16.0
+        costOutsourcing = 28.0
 
     [products.White3]
         name = "Viña lidón"
         category = "White"
-        demand = 4000
+        demand = 16000  # 2x: two production cycles (iMaxYoungWine = 2)
         price = 16.00
-        costOutsourcing = 23.0
+        costOutsourcing = 29.5
+        outsourced = false
 
 # 3. Initial Inventory - Vineyard/Reception
 #
 # 'ST0': Initial Stock at Time = 0
 [initial_inventory]
-    s_red = 655000
-    s_white_rose = 1414137
+    s_red = 65000
+    s_white_rose = 180000
 
 # 3b. Raw Material Cost (USD/L)
 #
@@ -130,16 +140,16 @@
 # This is equivalent to adding an explicit constraint,
 # but implemented as a variable bound, which is tighter and better for MIP performance.
 [product_ub]
-    Red1 = 5000
-    Red2 = 6000
-    Red3 = 5500
-    Red4 = 4000
-    Red5 = 3500
-    Rose1 = 8000
-    Rose2 = 5000
-    White1 = 8000
-    White2 = 5000
-    White3 = 6000
+    Red1 = 8000
+    Red2 = 8000
+    Red3 = 7500
+    Red4 = 9000
+    Red5 = 7000
+    Rose1 = 20000   # 2x: two production cycles (iMaxYoungWine = 2)
+    Rose2 = 14000   # 2x
+    White1 = 20000  # 2x
+    White2 = 14000  # 2x
+    White3 = 24000  # 2x
 
 # 5. Product Lines
 #
@@ -210,19 +220,37 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 [templates.Fa]
     alpha = 240.0
     beta = 0.0
-    compatible_units = ["inox5000", "inox10000", "inox17500", "inox22000"]
+    compatible_units = [
+        "inox_ext_10000", "inox_ext_22000", "inox_ext_5000v",
+        "inox_int_17000"
+    ]
 
 # Malolactic fermentation (Fl)
 [templates.Fl]
     alpha = 720.0
     beta = 0.0
-    compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700"]
+    compatible_units = [
+        "subte_6200", "subte_10500", "subte_9500", "subte_15000", "subte_9000",
+        "inox_int_17000"
+    ]
 
 # Cold stabilization (Cs)
 [templates.Cs]
     alpha = 168.0
     beta = 0.0
-    compatible_units = ["iso5000", "iso10000"]
+    compatible_units = [
+        "iso_ext_5000", "iso_ext_10000",
+        "inox_int_17000"
+    ]
+
+[templates.Alm]
+    alpha = 0.0
+    beta = 0.0
+    compatible_units = [
+        "inox_int_17000",
+        "subte_6200", "subte_10500", "subte_9500", "subte_15000", "subte_9000",
+        "ecobulk_1100", "ecobulk_650"
+    ]
 
 # Aging in barriques (2 months)
 [templates.AgeBar2M]
@@ -357,24 +385,21 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
     rhoIScons = {va5 = -1.0}
     rhoISprod = {Red5 = 1.0}
 
-[rho.Pr6]
+[rho.Pr]
     rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m6 = 0.58, dsch = 0.03, grape_skin = 0.39}
+    rhoISprod = {m = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa6]
-    rhoIScons = {m6 = -1.0}
+    rhoIScons = {m = -1.0}
     rhoISprod = {v6 = 1.0}
 
 [rho.Cs6]
     rhoIScons = {v6 = -1.0}
     rhoISprod = {Rose1 = 1.0}
 
-[rho.Pr7]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m7 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa7]
-    rhoIScons = {m7 = -1.0}
+    rhoIScons = {m = -1.0}
     rhoISprod = {v7 = 1.0}
 
 [rho.AgeJar1M7]
@@ -385,24 +410,18 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
     rhoIScons = {va7 = -1.0}
     rhoISprod = {Rose2 = 1.0}
 
-[rho.Pr8]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m8 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa8]
-    rhoIScons = {m8 = -1.0}
+    rhoIScons = {m = -1.0}
     rhoISprod = {v8 = 1.0}
 
 [rho.Cs8]
     rhoIScons = {v8 = -1.0}
     rhoISprod = {White1 = 1.0}
 
-[rho.Pr9]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m9 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa9]
-    rhoIScons = {m9 = -1.0}
+    rhoIScons = {m = -1.0}
     rhoISprod = {v9 = 1.0}
 
 [rho.AgeJar1M9]
@@ -413,12 +432,9 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
     rhoIScons = {va9 = -1.0}
     rhoISprod = {White2 = 1.0}
 
-[rho.Pr10]
-    rhoIScons = {s_white_rose = -1.0}
-    rhoISprod = {m10 = 0.58, dsch = 0.03, grape_skin = 0.39}
 
 [rho.Fa10]
-    rhoIScons = {m10 = -1.0}
+    rhoIScons = {m = -1.0}
     rhoISprod = {v10 = 1.0}
 
 [rho.Fl10]
@@ -436,64 +452,93 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
 # 8. Units
 #
 # Centralized unit definitions.
-# - quantity: number of physically available units of that type
-# - task_bounds.<Task>: [Bmin, Bmax] for each compatible task
+# - quantity:  number of physically available units of that type
+# - exterior:  true -> incurs cooling cost (costCooling per Lh)
+# - ecobulk:   true -> Alm limited to 720 h (1 month) by model constraint A_eco_alm_max
+# - task_bounds.<Task>: [Bmin, Bmax] for range, or scalar B for fixed-capacity (Bmin = Bmax = B)
 [units.press]
     quantity = 1
-    task_bounds = {Pr = [500, 21000]}
+    task_bounds = {Pr = [5000, 38000]}
 
-[units.inox5000]
-    quantity = 1
-    exterior = false
-    task_bounds = {Fa = [500, 4000]}
-
-[units.inox10000]
+[units.iso_ext_5000]
     quantity = 1
     exterior = true
-    task_bounds = {Fa = [1000, 8000]}
+    task_bounds = {Cs = 5000}
 
-[units.inox17500]
+[units.iso_ext_10000]
     quantity = 1
     exterior = true
-    task_bounds = {Fa = [1750, 14000]}
+    task_bounds = {Cs = [5000, 10000]}
 
-[units.inox22000]
+[units.inox_ext_10000]
+    quantity = 2
+    exterior = true
+    task_bounds = {Fa = 10000}
+
+[units.inox_ext_22000]
     quantity = 1
     exterior = true
-    task_bounds = {Fa = [2200, 17600], Fl = [4400, 21560], Alm = [20900, 22000]}
+    task_bounds = {Fa = 22000}
 
-[units.subte6300]
-    quantity = 1
-    task_bounds = {Fl = [1260, 6174], Alm = [5985, 6300]}
+[units.inox_ext_5000v]
+    quantity = 2
+    exterior = true
+    task_bounds = {Fa = [1000, 5000]}
 
-[units.subte7500]
+[units.inox_int_17000]
     quantity = 1
-    task_bounds = {Fl = [1500, 7350], Alm = [7125, 7500]}
+    task_bounds = {Fa = 17000, Fl = 17000, Cs = 17000, Alm = 17000}
 
-[units.subte9000]
+[units.subte_6200]
     quantity = 1
-    task_bounds = {Fl = [1800, 8820], Alm = [8550, 9000]}
+    task_bounds = {Fl = 6200, Alm = 6200}
 
-[units.subte9500]
+[units.subte_10500]
     quantity = 1
-    task_bounds = {Fl = [1900, 9310], Alm = [9025, 9500]}
+    task_bounds = {Fl = 10500, Alm = 10500}
 
-[units.subte12700]
+[units.subte_9500]
     quantity = 1
-    task_bounds = {Fl = [2540, 12446], Alm = [12065, 12700]}
+    task_bounds = {Fl = 9500, Alm = 9500}
 
-[units.iso5000]
+[units.subte_15000]
     quantity = 1
-    task_bounds = {Cs = [1000, 5000], Alm = [4750, 5000]}
+    task_bounds = {Fl = 15000, Alm = 15000}
 
-[units.iso10000]
+[units.subte_9000]
     quantity = 1
-    task_bounds = {Cs = [2000, 10000], Alm = [9500, 10000]}
+    task_bounds = {Fl = 9000, Alm = 9000}
+
+[units.inox_int_1000v]
+    quantity = 6
+    task_bounds = {}
+
+[units.inox_int_250v]
+    quantity = 3
+    task_bounds = {}
+
+[units.inox_int_600v]
+    quantity = 3
+    task_bounds = {}
+
+[units.inox_int_500v]
+    quantity = 1
+    task_bounds = {}
+
+[units.ecobulk_1100]
+    quantity = 10
+    ecobulk = true
+    task_bounds = {Alm = 1100}
+
+[units.ecobulk_650]
+    quantity = 1
+    ecobulk = true
+    task_bounds = {Alm = 650}
 
 [units.barrique]
     quantity = 85
-    task_bounds = {AgeBar2M = [225, 250], AgeBar4M = [225, 250], AgeBar9M = [225, 250], AgeBar11M = [225, 250], AgeBar15M = [225, 250]}
+    task_bounds = {AgeBar2M = 250, AgeBar4M = 250, AgeBar9M = 250, AgeBar11M = 250, AgeBar15M = 250}
 
 [units.jar]
     quantity = 40
-    task_bounds = {AgeJar1M = [300, 350], AgeJar4M = [300, 350]}
+    task_bounds = {AgeJar1M = 350, AgeJar4M = 350}

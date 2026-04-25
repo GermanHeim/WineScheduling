@@ -5,6 +5,8 @@ This script keeps the GDP scheduling formulation and switches the objective
 to economic profit maximization using price, outsourcing, and lateness terms.
 """
 
+import math
+from itertools import combinations
 import pyomo.environ as pyo
 import pyomo.gdp as gdp
 import tomllib
@@ -38,10 +40,11 @@ def add_cover_cuts(model):
     cover_indices = []
 
     for i in model.i:
+        # Pool tasks have no y variables, cover cut does not apply.
         pairs = [
             (j, round(pyo.value(model.Bmax[i, j]), 6))
             for j in model.j
-            if (i, j) in model.ij
+            if (i, j) in model.ij_nonpool
         ]
         if not pairs:
             continue
@@ -119,7 +122,11 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             )
         line_product[line] = cfg["product"]
         for step in cfg["steps"]:
-            tasks.append(f"{step}{line}")
+            if step == "Pr":
+                if "Pr" not in tasks:
+                    tasks.append("Pr")
+            else:
+                tasks.append(f"{step}{line}")
         line_last_task[line] = f"{cfg['steps'][-1]}{line}"
         # Lateness is evaluated on the last mandatory processing step
         # Optional trailing Alm should not hide lateness when it is skipped
@@ -134,13 +141,18 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 break
 
     # Derived line groups (used for states, ICS/IPS and tc1)
-    no_fl_lines = {l for l, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
-    ist_lines = {l for l, cfg in lines_cfg.items() if "Alm" in cfg["steps"]}
-    eco_lines = {l for l, cfg in lines_cfg.items() if cfg.get("ecobulk", False)}
+    no_fl_lines = {ln for ln, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
+    # alm_int_lines: lines where Alm is an intermediate buffer before an aging step
+    alm_int_lines = {
+        ln
+        for ln, cfg in lines_cfg.items()
+        if "Alm" in cfg["steps"] and cfg["steps"][-1] != "Alm"
+    }
+    eco_lines = {ln for ln, cfg in lines_cfg.items() if cfg.get("ecobulk", False)}
     # Lines where an aging step (AgeBar*, AgeJar*) precedes Cs
     aging_before_cs_lines = {
-        l
-        for l, cfg in lines_cfg.items()
+        ln
+        for ln, cfg in lines_cfg.items()
         if "Cs" in cfg["steps"]
         and any(
             is_aging_stage(step) for step in cfg["steps"][: cfg["steps"].index("Cs")]
@@ -148,8 +160,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     }
 
     model.i = pyo.Set(initialize=tasks)
-    model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
-    model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])
+    model.iAlmInt = pyo.Set(initialize=[f"Alm{ln}" for ln in alm_int_lines])
+    model.inst = pyo.Set(initialize=tasks)
     model.ipst = pyo.Set(initialize=list(line_lateness_task.values()))
     model.inpst = pyo.Set(
         initialize=[t for t in tasks if t.startswith(("Pr", "Fa", "Fl"))]
@@ -162,8 +174,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     unit_instances = []
     unit_instances_by_base = {}
     storage_units = []
-
     exterior_units = []
+    ecobulk_units = []
 
     for unit_name, unit_cfg in units_cfg.items():
         quantity = int(unit_cfg.get("quantity", 1))
@@ -178,18 +190,20 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 storage_units.append(inst_name)
             if unit_cfg.get("exterior", False):
                 exterior_units.append(inst_name)
+            if unit_cfg.get("ecobulk", False):
+                ecobulk_units.append(inst_name)
 
     model.j = pyo.Set(initialize=unit_instances)
     model.JST = pyo.Set(initialize=storage_units)
     model.JEXT = pyo.Set(initialize=exterior_units)
+    model.JECO = pyo.Set(initialize=ecobulk_units)
     model.JBAR = pyo.Set(initialize=unit_instances_by_base.get("barrique", []))
     model.JJAR = pyo.Set(initialize=unit_instances_by_base.get("jar", []))
 
-    barrique_units_ordered = sorted(model.JBAR, key=unit_order_key)
-    jar_units_ordered = sorted(model.JJAR, key=unit_order_key)
-
     model.nJST = pyo.Param(initialize=len(model.JST))
-    model.inv_nJST = pyo.Param(initialize=1 / len(model.JST) if len(model.JST) > 0 else 0.0)
+    model.inv_nJST = pyo.Param(
+        initialize=1 / len(model.JST) if len(model.JST) > 0 else 0.0
+    )
 
     # Task-unit pairs (ij)
     ij_data = []
@@ -213,18 +227,72 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                     ij_data.append((task, unit_inst))
     model.ij = pyo.Set(initialize=ij_data, dimen=2)
 
+    barr_set = set(unit_instances_by_base.get("barrique", []))
+    jar_set = set(unit_instances_by_base.get("jar", []))
+
+    def compat(task):
+        return [j for i, j in ij_data if i == task]
+
+    barr_tasks = [
+        i for i in tasks if compat(i) and all(j in barr_set for j in compat(i))
+    ]
+    jar_tasks = [i for i in tasks if compat(i) and all(j in jar_set for j in compat(i))]
+    pool_tasks = set(barr_tasks + jar_tasks)
+
+    model.iBAR = pyo.Set(initialize=barr_tasks)
+    model.iJAR = pyo.Set(initialize=jar_tasks)
+
+    ij_nonpool_data = [(i, j) for (i, j) in ij_data if i not in pool_tasks]
+    model.ij_nonpool = pyo.Set(initialize=ij_nonpool_data, dimen=2)
+
+    def fixed_pool_capacity(unit_name):
+        unit_cfg = units_cfg.get(unit_name)
+        if unit_cfg is None:
+            raise ValueError(f"Missing required pool unit '{unit_name}' in [units]")
+        task_bounds = unit_cfg.get("task_bounds", {})
+        if not task_bounds:
+            raise ValueError(
+                f"Pool unit '{unit_name}' must define at least one task_bounds entry"
+            )
+
+        capacities = set()
+        for task_name, limits in task_bounds.items():
+            if isinstance(limits, (int, float)):
+                bmin_val = bmax_val = float(limits)
+            else:
+                bmin_val, bmax_val = float(limits[0]), float(limits[1])
+            if abs(bmax_val - bmin_val) > 1e-6:
+                raise ValueError(
+                    f"Pool unit '{unit_name}' requires fixed bounds for '{task_name}', "
+                    f"got [{bmin_val}, {bmax_val}]"
+                )
+            capacities.add(round(bmax_val, 6))
+
+        if len(capacities) != 1:
+            raise ValueError(
+                f"Pool unit '{unit_name}' must use one fixed capacity across tasks, "
+                f"found {sorted(capacities)}"
+            )
+        return capacities.pop()
+
+    barr_cap = fixed_pool_capacity("barrique") if barr_set else 0.0
+    jar_cap = fixed_pool_capacity("jar") if jar_set else 0.0
+    n_barr = len(barr_set)
+    n_jar = len(jar_set)
+
     model.n = pyo.Set(initialize=list(range(1, params["global"]["n_max"] + 1)))
 
     # States - built dynamically from line step definitions:
     #   s_red / s_white_rose: shared raw-material pools by product category
-    #   m{l}: liquid must after Pressing (only for pressed wines)
+    #   m: shared liquid must pool (all pressing lines produce into / consume from)
     #   v{l}: after Fa (zero-wait intermediate)
     #   vl{l}: after Fl (NIS intermediate, only when Fl is in steps)
     #   product state: final product key declared on each line
     #   dsch: discard / discharge balance state
     line_raw_state = {}
     raw_states = set()
-    states = ["dsch"]
+    has_pressing = any("Pr" in cfg["steps"] for cfg in lines_cfg.values())
+    states = ["dsch"] + (["grape_skin"] if has_pressing else [])
     for line, cfg in lines_cfg.items():
         product_key = line_product[line]
         category = params["products"][product_key].get("category", "").strip().lower()
@@ -233,13 +301,15 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         raw_states.add(raw_state)
         if raw_state not in states:
             states.append(raw_state)
-        if "Pr" in cfg["steps"]:
-            states.append(f"m{line}")
+        if "Pr" in cfg["steps"] and "m" not in states:
+            states.append("m")
         states.append(f"v{line}")
         if "Fl" in cfg["steps"]:
             states.append(f"vl{line}")
         if line in aging_before_cs_lines:
             states.append(f"va{line}")
+        if line in alm_int_lines:
+            states.append(f"vbuf{line}")
         states.append(line_product[line])
     model.s = pyo.Set(initialize=states)
 
@@ -250,12 +320,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         line = task_line(task)
         stage = task_stage(task)
         if stage == "Pr":
-            ICS_data.append((task, line_raw_state[line]))
-            IPS_data.append((task, f"m{line}"))
+            # Shared Pr task: all pressing lines use s_white_rose
+            ICS_data.append((task, "s_white_rose"))
+            IPS_data.append((task, "m"))
             IPS_data.append((task, "dsch"))
+            IPS_data.append((task, "grape_skin"))
         elif stage == "Fa":
             if "Pr" in lines_cfg[line]["steps"]:
-                ICS_data.append((task, f"m{line}"))
+                ICS_data.append((task, "m"))
             else:
                 ICS_data.append((task, line_raw_state[line]))
             IPS_data.append((task, f"v{line}"))
@@ -274,12 +346,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 ICS_data.append((task, f"vl{line}"))
             IPS_data.append((task, line_product[line]))
         elif stage == "Alm":
-            ICS_data.append((task, line_product[line]))
-            IPS_data.append((task, line_product[line]))
+            if line in alm_int_lines:
+                # Intermediate buffer: consume pre-aging state, produce vbuf (can wait)
+                pre_ag = f"v{line}" if line in no_fl_lines else f"vl{line}"
+                ICS_data.append((task, pre_ag))
+                IPS_data.append((task, f"vbuf{line}"))
         elif is_aging_stage(stage):
             if line in aging_before_cs_lines:
-                # Aging before Cs, consume fermentation intermediate, produce va{line}
-                if line in no_fl_lines:
+                # Aging before Cs: consume buffer state if Alm exists, else fermentation intermediate
+                if line in alm_int_lines:
+                    ICS_data.append((task, f"vbuf{line}"))
+                elif line in no_fl_lines:
                     ICS_data.append((task, f"v{line}"))
                 else:
                     ICS_data.append((task, f"vl{line}"))
@@ -292,37 +369,39 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     model.SR = pyo.Set(initialize=sorted(raw_states))
     model.line_raw_state = line_raw_state
-    model.SP = pyo.Set(initialize=["dsch"] + [line_product[l] for l in lines])
+    model.SP = pyo.Set(
+        initialize=["dsch"]
+        + (["grape_skin"] if has_pressing else [])
+        + [line_product[ln] for ln in lines]
+    )
     model.SI = model.s - model.SP - model.SR
-    model.SFISEco = pyo.Set(initialize=[line_product[l] for l in eco_lines])
+    model.SFISEco = pyo.Set(initialize=[line_product[ln] for ln in eco_lines])
     model.SFISBar = pyo.Set(
-        initialize=[
-            line_product[l] for l in lines if l not in eco_lines and l not in ist_lines
-        ]
+        initialize=[line_product[ln] for ln in lines if ln not in eco_lines]
     )
     model.SZW = pyo.Set(
-        initialize=[f"v{l}" for l in lines]
-        + [f"m{l}" for l in lines if "Pr" in lines_cfg[l]["steps"]]
+        initialize=[f"v{ln}" for ln in lines]
+        + (["m"] if any("Pr" in lines_cfg[ln]["steps"] for ln in lines) else [])
     )
     model.SNIS = pyo.Set(
-        initialize=[f"vl{l}" for l in lines if l not in no_fl_lines]
-        + [f"va{l}" for l in aging_before_cs_lines]
+        initialize=[f"vl{ln}" for ln in lines if ln not in no_fl_lines]
+        + [f"va{ln}" for ln in aging_before_cs_lines]
     )
 
     tc1_data = []
-    tc2_data = []
     for line in lines:
         steps = lines_cfg[line]["steps"]
         for idx in range(len(steps) - 1):
             current_task = f"{steps[idx]}{line}"
             next_task = f"{steps[idx + 1]}{line}"
-            if steps[idx + 1] == "Alm":
-                tc2_data.append((current_task, next_task))
+            if steps[idx] == "Alm" and line in alm_int_lines:
+                pass
+            elif steps[idx] == "Pr" and steps[idx + 1] == "Fa":
+                pass
             else:
                 tc1_data.append((current_task, next_task))
     model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
-    model.tc2 = pyo.Set(initialize=tc2_data, dimen=2)
-    model.prd = pyo.Set(initialize=[line_product[l] for l in lines])
+    model.prd = pyo.Set(initialize=[line_product[ln] for ln in lines])
 
     # ========================================
     # PARAMETERS
@@ -331,11 +410,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.iMax = pyo.Param(initialize=global_cfg.get("iMax", 1))
     model.jMax = pyo.Param(initialize=global_cfg.get("jMax", 1))
     model.jMin = pyo.Param(initialize=global_cfg.get("jMin", 1))
-    model.iMaxST = pyo.Param(initialize=global_cfg.get("iMaxST", 1))
-    model.jMaxST = pyo.Param(initialize=global_cfg.get("jMaxST", 2))
-    model.jMinST = pyo.Param(initialize=global_cfg.get("jMinST", 1))
-    model.MustUseEcobulk = pyo.Param(initialize=global_cfg.get("MustUseEcobulk", 0))
-
     model.ST0 = pyo.Param(model.s, initialize=params["initial_inventory"], default=0)
     model.STmax = pyo.Param(model.s, initialize=0)
     model.alpha = pyo.Param(model.i, mutable=True, default=0)
@@ -354,24 +428,30 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             if "compatible_units" in template:
                 for unit in template["compatible_units"]:
                     limits = units_cfg[unit]["task_bounds"][prefix]
+                    if isinstance(limits, (int, float)):
+                        bmin_val = bmax_val = float(limits)
+                    else:
+                        bmin_val, bmax_val = float(limits[0]), float(limits[1])
                     for unit_inst in unit_instances_by_base[unit]:
                         if (task, unit_inst) in model.ij:
-                            model.Bmin[task, unit_inst] = limits[0]
-                            model.Bmax[task, unit_inst] = limits[1]
+                            model.Bmin[task, unit_inst] = bmin_val
+                            model.Bmax[task, unit_inst] = bmax_val
 
-    total = 0.0
-    for j in model.JST:
-        tank_count = 0
-        tank_range_sum = 0.0
-        for i in model.ist:
-            if (i, j) in model.ij:
-                tank_range_sum += pyo.value(model.Bmax[i, j]) - pyo.value(
-                    model.Bmin[i, j]
-                )
-                tank_count += 1
-        if tank_count > 0:
-            total += tank_range_sum / tank_count
-    total_avg_range_value = total if total > 0.0 else 1.0
+    # Cooling cost assumes beta=0 for all exterior-unit tasks (otherwise
+    # it cannot be handled as MILP).
+    bad_cooling_tasks = [
+        i
+        for i in model.inst
+        if pyo.value(model.beta[i]) != 0
+        and any((i, j) in model.ij and j in model.JEXT for j in model.j)
+    ]
+    if bad_cooling_tasks:
+        raise ValueError(
+            f"Cooling cost requires beta=0 for exterior-unit tasks, "
+            f"but beta != 0 for: {bad_cooling_tasks}. "
+        )
+
+    total_avg_range_value = 1.0
 
     model.H = pyo.Param(initialize=params["global"]["H"])
 
@@ -387,6 +467,24 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 if "rhoISprod" in rho_data:
                     for state, value in rho_data["rhoISprod"].items():
                         model.rhoISprod[task_key, state] = value
+
+    # Intermediate Alm rho: pass-through buffer (consume pre-aging, produce vbuf)
+    for line in alm_int_lines:
+        task = f"Alm{line}"
+        pre_ag = f"v{line}" if line in no_fl_lines else f"vl{line}"
+        model.rhoIScons[task, pre_ag] = -1.0
+        model.rhoISprod[task, f"vbuf{line}"] = 1.0
+
+    # Override aging task rho for alm_int_lines: consume vbuf (not the pre-aging state)
+    # TODO: We still need to update this
+    for line in alm_int_lines:
+        pre_ag = f"v{line}" if line in no_fl_lines else f"vl{line}"
+        steps = lines_cfg[line]["steps"]
+        for stage in steps:
+            if is_aging_stage(stage):
+                task = f"{stage}{line}"
+                model.rhoIScons[task, pre_ag] = 0.0
+                model.rhoIScons[task, f"vbuf{line}"] = -1.0
 
     demand_data = {k: v["demand"] for k, v in params["products"].items()}
     model.D = pyo.Param(model.s, initialize=demand_data, default=0)
@@ -443,6 +541,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     )
     model.penaltyMS = pyo.Param(initialize=params["global"].get("penaltyMS", 0.0))
     model.costCooling = pyo.Param(initialize=params["global"].get("costCooling", 0.0))
+    model.penaltyDiscard = pyo.Param(initialize=global_cfg.get("penaltyDiscard", 3.0))
+    model.GrapeSkinValue = pyo.Param(initialize=global_cfg.get("grape_skin_value", 0.0))
+    imax_young = int(global_cfg.get("iMaxYoungWine", 1))
     model.total_avg_range = pyo.Param(initialize=total_avg_range_value, mutable=False)
     model.inv_total_avg_range = pyo.Param(initialize=1 / total_avg_range_value)
 
@@ -483,11 +584,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # VARIABLES
     # ========================================
 
-    model.y = pyo.Var(model.ij, model.n, domain=pyo.Binary)
+    # y and bj only for non-pool tasks, since pool tasks use NumBarr/NumJar integer counts
+    model.y = pyo.Var(model.ij_nonpool, model.n, domain=pyo.Binary)
 
     # Continuous Variables
     model.b = pyo.Var(model.i, model.n, domain=pyo.NonNegativeReals)
-    model.bj = pyo.Var(model.ij, model.n, domain=pyo.NonNegativeReals)
+    model.bj = pyo.Var(model.ij_nonpool, model.n, domain=pyo.NonNegativeReals)
 
     # Set upper bounds for bj and b to allow BigM estimation
     # Find global max capacity
@@ -500,14 +602,40 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     if max_tank_cap == 0:
         max_tank_cap = 500000  # Fallback
 
+    # Precompute: for tasks that directly produce a final market product,
+    # map i -> (s, rho) so the product-ub-based b[i,n] UB can be applied below.
+    product_ub_cfg = params.get("product_ub", {})
+    market_prod_rho: dict[str, tuple[str, float]] = {}
+    smarket_set = set(model.SMarket)
+    for ip, sp in model.IPS:
+        if sp in smarket_set and sp in product_ub_cfg:
+            rho_val = pyo.value(model.rhoISprod[ip, sp])
+            if rho_val > 0:
+                market_prod_rho[ip] = (sp, rho_val)
+
     for i in model.i:
-        b_ub_i = sum(pyo.value(model.Bmax[i, j]) for j in model.j if (i, j) in model.ij)
-        if b_ub_i <= 0:
-            b_ub_i = max_tank_cap * len(model.j)  # Fallback for unexpected sparse data
+        if i in barr_tasks:
+            b_ub_i = barr_cap * n_barr
+        elif i in jar_tasks:
+            b_ub_i = jar_cap * n_jar
+        else:
+            stage_i = task_stage(i)
+            template_i = params.get("templates", {}).get(stage_i, {})
+            jmax_i = int(template_i.get("max_units", pyo.value(model.jMax)))
+            bmax_vals_i = sorted(
+                [pyo.value(model.Bmax[i, j]) for j in model.j if (i, j) in model.ij],
+                reverse=True,
+            )
+            b_ub_i = sum(bmax_vals_i[:jmax_i]) if bmax_vals_i else max_tank_cap
+            if b_ub_i <= 0:
+                b_ub_i = max_tank_cap
+        if i in market_prod_rho:
+            sp, rho_val = market_prod_rho[i]
+            b_ub_i = min(b_ub_i, product_ub_cfg[sp] / rho_val)
         for n in model.n:
             model.b[i, n].setub(b_ub_i)
 
-    for i, j in model.ij:
+    for i, j in model.ij_nonpool:
         for n in model.n:
             model.bj[i, j, n].setub(pyo.value(model.Bmax[i, j]))
 
@@ -518,21 +646,69 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.Tf = pyo.Var(
         model.i, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
     )
+    j_nonpool = [j for j in unit_instances if j not in barr_set and j not in jar_set]
     model.Tsj = pyo.Var(
-        model.j, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
+        j_nonpool, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
     )
     model.Tfj = pyo.Var(
-        model.j, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
+        j_nonpool, model.n, domain=pyo.NonNegativeReals, bounds=(0, model.H)
     )
+
+    model.NumBarr = pyo.Var(
+        model.iBAR, model.n, domain=pyo.NonNegativeIntegers, bounds=(0, n_barr)
+    )
+    model.NumJar = pyo.Var(
+        model.iJAR, model.n, domain=pyo.NonNegativeIntegers, bounds=(0, n_jar)
+    )
+
     model.FinalProd = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.Outsource = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
     model.LatenessProd = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.JST_unused = pyo.Var(domain=pyo.NonNegativeReals)
     model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
+    model.Discard = pyo.Var(model.SI, model.n, domain=pyo.NonNegativeReals)
+    for s in model.SI:
+        discard_ub = max(
+            (
+                pyo.value(model.rhoISprod[i, s])
+                * sum(
+                    pyo.value(model.Bmax[i, j]) for j in model.j if (i, j) in model.ij
+                )
+                for i in model.i
+                if (i, s) in model.IPS
+            ),
+            default=0.0,
+        )
+        if discard_ub > 0:
+            for n in model.n:
+                model.Discard[s, n].setub(discard_ub)
 
     model.task_jmax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMax)
     model.task_jmin = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMin)
+    model.task_imax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.iMax)
+    pressing_lines_pr = [ln for ln in lines if "Pr" in lines_cfg[ln]["steps"]]
+    if "Pr" in model.i and pressing_lines_pr:
+        n_pressing = len(pressing_lines_pr)
+        min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_pr)
+        n_valid_pr = n_max - (min_K_pr - 1)
+        # Scale Pr activations by imax_young: up to imax_young runs per pressing line,
+        # capped by available event slots (n_valid_pr).
+        model.task_imax["Pr"] = min(n_pressing * imax_young, n_valid_pr)
+
+    if imax_young > 1:
+        young_tasks = [
+            f"{step}{ln}"
+            for ln in pressing_lines_pr
+            for step in lines_cfg[ln]["steps"]
+            if step != "Pr"
+        ]
+        for t in young_tasks:
+            if t in model.i:
+                model.task_imax[t] = imax_young
+        print(
+            f"  [iMaxYoungWine={imax_young}] Applied to {len(young_tasks)} pressed-wine tasks."
+        )
     for task in model.i:
         stage = task_stage(task)
         template = params.get("templates", {}).get(stage, {})
@@ -541,12 +717,41 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         if "min_units" in template:
             model.task_jmin[task] = int(template["min_units"])
 
+    sr_set = set(model.SR)
+    smarket_set_local = set(model.SMarket)
+    for s in model.s:
+        if s in sr_set:
+            ub = float(pyo.value(model.ST0[s]))
+        elif s in smarket_set_local:
+            ub = float(product_ub_cfg.get(s, pyo.value(model.H)))
+        else:
+            producers = [i for i in model.i if (i, s) in model.IPS]
+            if producers:
+                ub = sum(
+                    max(
+                        (
+                            pyo.value(model.Bmax[i, j])
+                            for j in model.j
+                            if (i, j) in model.ij
+                        ),
+                        default=0.0,
+                    )
+                    * pyo.value(model.rhoISprod[i, s])
+                    * float(pyo.value(model.task_imax[i]))
+                    for i in producers
+                )
+                ub = max(ub, 0.0)
+            else:
+                ub = float(pyo.value(model.H))
+        for n in model.n:
+            model.ST[s, n].setub(ub)
+    print(f"  [ST bounds] Applied upper bounds on ST for {len(list(model.s))} states.")
+
     # Global lower bound for makespan (longest line path)
     min_makespan = max(
         sum(
-            pyo.value(model.alpha[f"{step}{line}"])
+            pyo.value(model.alpha["Pr" if step == "Pr" else f"{step}{line}"])
             for step in cfg["steps"]
-            if f"{step}{line}" in model.i
         )
         for line, cfg in lines_cfg.items()
     )
@@ -564,7 +769,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.JST_unused.setub(pyo.value(model.nJST))
     for j in model.j:
         freespace_ub = max(
-            pyo.value(model.Bmax[i, j]) for i in model.i if (i, j) in model.ij
+            (pyo.value(model.Bmax[i, j]) for i in model.i if (i, j) in model.ij),
+            default=0.0,
         )
         model.Freespace[j].setub(freespace_ub)
 
@@ -572,23 +778,43 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # earliest_start[k] = sum of alpha for all steps before k (can't start earlier).
     # latest_finish[k] = H - sum of alpha for all steps after k (must leave room).
     H_val = pyo.value(model.H)
+    task_ES: dict[str, float] = {}
+    task_LF: dict[str, float] = {}
     for line, cfg in lines_cfg.items():
         steps = cfg["steps"]
-        alphas = [pyo.value(model.alpha[f"{step}{line}"]) for step in steps]
+        tnames = ["Pr" if s == "Pr" else f"{s}{line}" for s in steps]
+        alphas = [pyo.value(model.alpha[t]) for t in tnames]
         prefix = [0.0] * len(steps)
         suffix = [0.0] * len(steps)
         for k in range(1, len(steps)):
             prefix[k] = prefix[k - 1] + alphas[k - 1]
         for k in range(len(steps) - 2, -1, -1):
             suffix[k] = suffix[k + 1] + alphas[k + 1]
-        for k, step in enumerate(steps):
-            task = f"{step}{line}"
+        for k, (step, task) in enumerate(zip(steps, tnames)):
+            lf = H_val - suffix[k]
+            if step == "Pr":
+                task_ES["Pr"] = 0.0
+                if "Pr" not in task_LF or lf > task_LF["Pr"]:
+                    task_LF["Pr"] = lf
+                continue
+            task_ES[task] = prefix[k]
+            task_LF[task] = lf
             if prefix[k] > 0:
                 for n in model.n:
                     model.Ts[task, n].setlb(prefix[k])
             if suffix[k] > 0:
                 for n in model.n:
-                    model.Tf[task, n].setub(H_val - suffix[k])
+                    model.Tf[task, n].setub(lf)
+            if lf < H_val:
+                for n in model.n:
+                    model.Ts[task, n].setub(lf)
+
+    if "Pr" in task_LF:
+        pr_lf = task_LF["Pr"]
+        if pr_lf < H_val:
+            for n in model.n:
+                model.Tf["Pr", n].setub(pr_lf)
+                model.Ts["Pr", n].setub(pr_lf)
 
     # ========================================
     # DISJUNCT PRE-CREATION
@@ -609,8 +835,96 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             inactive_disjuncts[i, n] = d_inact
 
     # ========================================
+    # STATIC FIXING: impossible task-event combinations
+    # ========================================
+    # Task at position k (1-indexed) in a line of K steps needs:
+    #   min valid event = k
+    #   max valid event = n_max-(K-k)
+    task_pos_len: dict[str, tuple[int, int]] = {}
+    pressing_lines_all = [ln for ln in lines if "Pr" in lines_cfg[ln]["steps"]]
+    if pressing_lines_all:
+        min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_all)
+        task_pos_len["Pr"] = (1, min_K_pr)
+    for line, cfg in lines_cfg.items():
+        steps = cfg["steps"]
+        K = len(steps)
+        for k, step in enumerate(steps, start=1):
+            if step == "Pr":
+                continue
+            task_pos_len[f"{step}{line}"] = (k, K)
+
+    n_fixed = 0
+    task_valid_event_count: dict[str, int] = {}
+    for i in model.i:
+        k, K = task_pos_len[i]
+        min_event = k
+        max_event = n_max - (K - k)
+        valid = 0
+        for n in model.n:
+            if n < min_event or n > max_event:
+                active_disjuncts[i, n].binary_indicator_var.fix(0)
+                inactive_disjuncts[i, n].binary_indicator_var.fix(1)
+                model.b[i, n].setub(0)
+                n_fixed += 1
+            else:
+                valid += 1
+        task_valid_event_count[i] = valid
+
+    # Clamp task_imax to valid event count: if the event range has fewer slots
+    # than imax, a higher imax is unreachable.
+    n_clamped = 0
+    for i in model.i:
+        cur = pyo.value(model.task_imax[i])
+        cap = task_valid_event_count.get(i, cur)
+        if cap < cur:
+            model.task_imax[i] = cap
+            n_clamped += 1
+
+    print(
+        f"  [presolve] Fixed {n_fixed}/{len(model.i) * n_max} task-event disjuncts inactive."
+        + (f" Clamped imax for {n_clamped} tasks." if n_clamped else "")
+    )
+
+    # Cross-event pool sequencing pairs: For each unordered pair {(i1,n1),(i2,n2)} of
+    # distinct pool task-events that are not both fixed-inactive we add two
+    # sequencing binaries (z_fwd / z_rev) and three constraints that correctly handle:
+    #   - z_fwd = 1  ->  Tf[i1,n1] <= Ts[i2,n2]        (i1 finishes before i2 starts)
+    #   - z_rev = 1  ->  Tf[i2,n2] <= Ts[i1,n1]        (i2 finishes before i1 starts)
+    #   - z_fwd=z_rev=0  ->  concurrent, so combined count must <= pool size
+    # BarriqueMaxIdle fires as a side-effect of z_fwd=1 (or z_rev=1)
+    def active_pool_task_events(pool_tasks_list):
+        return [
+            (i, n)
+            for i in pool_tasks_list
+            for n in model.n
+            if not (
+                active_disjuncts[i, n].binary_indicator_var.is_fixed()
+                and pyo.value(active_disjuncts[i, n].binary_indicator_var) == 0
+            )
+        ]
+
+    barr_te = active_pool_task_events(barr_tasks)
+    jar_te = active_pool_task_events(jar_tasks)
+
+    barr_cross = [(i1, n1, i2, n2) for (i1, n1), (i2, n2) in combinations(barr_te, 2)]
+    jar_cross = [(i1, n1, i2, n2) for (i1, n1), (i2, n2) in combinations(jar_te, 2)]
+    print(
+        f"  [pool seq] Barrique cross-event pairs: {len(barr_cross)}, "
+        f"Jar cross-event pairs: {len(jar_cross)}"
+    )
+
+    if barr_cross:
+        model.BarrSeqFwd = pyo.Var(barr_cross, domain=pyo.Binary)
+        model.BarrSeqRev = pyo.Var(barr_cross, domain=pyo.Binary)
+    if jar_cross:
+        model.JarSeqFwd = pyo.Var(jar_cross, domain=pyo.Binary)
+        model.JarSeqRev = pyo.Var(jar_cross, domain=pyo.Binary)
+
+    # ========================================
     # CONSTRAINTS (Standard Algebraic)
     # ========================================
+
+    si_set = set(model.SI)
 
     # Material balances (h04, h03)
     def h04_rule(model, s, n):
@@ -619,7 +933,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for i in model.i
             if (i, s) in model.ICS
         )
-        return model.ST[s, n] == model.ST0[s] + consumed
+        discard = model.Discard[s, 1] if s in si_set else 0.0
+        return model.ST[s, n] == model.ST0[s] + consumed - discard
 
     model.h04 = pyo.Constraint(model.s, [1], rule=h04_rule)
 
@@ -634,7 +949,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for i in model.i
             if (i, s) in model.ICS
         )
-        return model.ST[s, n] == model.ST[s, n - 1] + produced + consumed
+        discard = model.Discard[s, n] if s in si_set else 0.0
+        return model.ST[s, n] == model.ST[s, n - 1] + produced + consumed - discard
 
     model.h03 = pyo.Constraint(model.s, [n for n in model.n if n > 1], rule=h03_rule)
 
@@ -648,13 +964,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     # Unit capacity h09
     def h09_rule(model, j):
-        total_time = sum(
+        if j in barr_set or j in jar_set:
+            return pyo.Constraint.Skip
+        terms = [
             model.alpha[i] * model.y[i, j, n] + model.beta[i] * model.bj[i, j, n]
             for i in model.inst
             for n in model.n
-            if (i, j) in model.ij
-        )
-        return total_time <= model.H
+            if (i, j) in model.ij_nonpool
+        ]
+        if not terms:
+            return pyo.Constraint.Feasible
+        return sum(terms) <= model.H
 
     model.h09 = pyo.Constraint(model.j, rule=h09_rule)
 
@@ -675,7 +995,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for i in model.i
             if (i, s) in model.IPS
         )
-        return model.ST[s, n_max] + produced == 0
+        return model.ST[s, n_max] + produced - model.Discard[s, n_max] == 0
 
     model.h16 = pyo.Constraint(model.SZW, rule=h16_rule)
 
@@ -687,71 +1007,189 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         rule=lambda m, s: m.Outsource[s] == 0,
     )
 
-    # A01/A02/A01st/A02st: unit-count bounds using disjunct binary_indicator_var as W
+    # A01/A02/A01st/A02st: unit-count bounds
+    inst_nonpool = [i for i in model.inst if i not in pool_tasks]
+
     def A01_rule(model, i, n):
         return (
-            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
+            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij_nonpool)
             <= model.task_jmax[i] * active_disjuncts[i, n].binary_indicator_var
         )
 
-    model.A01 = pyo.Constraint(model.inst, model.n, rule=A01_rule)
+    model.A01 = pyo.Constraint(inst_nonpool, model.n, rule=A01_rule)
 
     def A02_rule(model, i, n):
         return (
-            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
+            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij_nonpool)
             >= model.task_jmin[i] * active_disjuncts[i, n].binary_indicator_var
         )
 
-    model.A02 = pyo.Constraint(model.inst, model.n, rule=A02_rule)
+    model.A02 = pyo.Constraint(inst_nonpool, model.n, rule=A02_rule)
 
-    def A01st_rule(model, i, n):
-        return (
-            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            <= model.jMaxST * active_disjuncts[i, n].binary_indicator_var
-        )
-
-    model.A01st = pyo.Constraint(model.ist, model.n, rule=A01st_rule)
-
-    def A02st_rule(model, i, n):
-        return (
-            sum(model.y[i, j, n] for j in model.j if (i, j) in model.ij)
-            >= model.jMinST * active_disjuncts[i, n].binary_indicator_var
-        )
-
-    model.A02st = pyo.Constraint(model.ist, model.n, rule=A02st_rule)
+    # Pool vessel-count bounds: active -> min_units <= count <= pool_size.
+    model.BarrMin = pyo.Constraint(
+        model.iBAR,
+        model.n,
+        rule=lambda m, i, n: m.NumBarr[i, n]
+        >= m.task_jmin[i] * active_disjuncts[i, n].binary_indicator_var,
+    )
+    model.BarrMaxActive = pyo.Constraint(
+        model.iBAR,
+        model.n,
+        rule=lambda m, i, n: m.NumBarr[i, n]
+        <= n_barr * active_disjuncts[i, n].binary_indicator_var,
+    )
+    model.JarMin = pyo.Constraint(
+        model.iJAR,
+        model.n,
+        rule=lambda m, i, n: m.NumJar[i, n]
+        >= m.task_jmin[i] * active_disjuncts[i, n].binary_indicator_var,
+    )
+    model.JarMaxActive = pyo.Constraint(
+        model.iJAR,
+        model.n,
+        rule=lambda m, i, n: m.NumJar[i, n]
+        <= n_jar * active_disjuncts[i, n].binary_indicator_var,
+    )
 
     # A04: Total batch
     def A04_rule(model, i, n):
+        if i in barr_tasks:
+            return model.b[i, n] == barr_cap * model.NumBarr[i, n]
+        if i in jar_tasks:
+            return model.b[i, n] == jar_cap * model.NumJar[i, n]
         return model.b[i, n] == sum(
-            model.bj[i, j, n] for j in model.j if (i, j) in model.ij
+            model.bj[i, j, n] for j in model.j if (i, j) in model.ij_nonpool
         )
 
     model.A04 = pyo.Constraint(model.i, model.n, rule=A04_rule)
+
+    # Pool capacity per event: all barrique/jar tasks compete for the same physical pool
+    model.BarrCapacity = pyo.Constraint(
+        model.n,
+        rule=lambda m, n: sum(m.NumBarr[i, n] for i in m.iBAR) <= n_barr,
+    )
+    model.JarCapacity = pyo.Constraint(
+        model.n,
+        rule=lambda m, n: sum(m.NumJar[i, n] for i in m.iJAR) <= n_jar,
+    )
 
     # A06: Max activations (non-storage tasks)
     model.A06 = pyo.Constraint(
         model.inst,
         rule=lambda m, i: sum(active_disjuncts[i, n].binary_indicator_var for n in m.n)
-        <= m.iMax,
-    )
-    # A06st: Max activations (storage tasks)
-    # With persistence (Eq. 2.3), W[i,n] is non-decreasing, so W[i, n_max] suffices.
-    model.A06st = pyo.Constraint(
-        model.ist,
-        rule=lambda m, i: active_disjuncts[i, n_max].binary_indicator_var <= m.iMaxST,
-    )
-    model.A07 = pyo.Constraint(
-        model.ist, model.n, rule=lambda m, i, n: m.Tf[i, n] >= m.Ts[i, n]
+        <= m.task_imax[i],
     )
 
-    # A09/A10: Unit event sequencing
+    # A06_min: Min activations valid cuts for non-outsourceable lines
+    min_act_indices = []
+    min_act_rhs: dict[str, int] = {}
+
+    non_outsource_lines = [
+        ln
+        for ln in lines
+        if line_product[ln] in model.SMarket
+        and pyo.value(model.OutsourceAllowed[line_product[ln]]) == 0
+    ]
+
+    for line in non_outsource_lines:
+        s = line_product[line]
+        demand = pyo.value(model.D[s])
+        if demand <= 0:
+            continue
+        steps = lines_cfg[line]["steps"]
+        for step in steps:
+            if step == "Pr":
+                continue
+            task_name = f"{step}{line}"
+            if task_name not in model.i:
+                continue
+            max_bmax = max(
+                (
+                    pyo.value(model.Bmax[task_name, j])
+                    for j in model.j
+                    if (task_name, j) in model.ij
+                ),
+                default=0.0,
+            )
+            if max_bmax <= 0:
+                continue
+            rhs = math.ceil(demand / max_bmax)
+            rhs = min(
+                rhs,
+                task_valid_event_count.get(task_name, rhs),
+                int(pyo.value(model.task_imax[task_name])),
+            )
+            if rhs >= 2:
+                cur = min_act_rhs.get(task_name, 0)
+                if rhs > cur:
+                    min_act_rhs[task_name] = rhs
+                    if task_name not in min_act_indices:
+                        min_act_indices.append(task_name)
+
+    # A06_min_Pr for non-outsource pressed wine lines
+    non_outsource_pressed = [
+        ln
+        for ln in pressing_lines_pr
+        if line_product[ln] in model.SMarket
+        and pyo.value(model.OutsourceAllowed[line_product[ln]]) == 0
+    ]
+    if "Pr" in model.i and non_outsource_pressed:
+        rho_m_pr = (
+            params.get("rho", {}).get("Pr", {}).get("rhoISprod", {}).get("m", 0.0)
+        )
+        max_b_pr = max(
+            (pyo.value(model.Bmax["Pr", j]) for j in model.j if ("Pr", j) in model.ij),
+            default=0.0,
+        )
+        if max_b_pr > 0 and rho_m_pr > 0:
+            total_min_must = 0.0
+            for ln in non_outsource_pressed:
+                demand_ln = pyo.value(model.D[line_product[ln]])
+                chain_yield = 1.0
+                for step in lines_cfg[ln]["steps"]:
+                    if step == "Pr":
+                        continue
+                    rho_entry = params.get("rho", {}).get(f"{step}{ln}", {})
+                    for val in rho_entry.get("rhoISprod", {}).values():
+                        if val < 1.0:
+                            chain_yield *= val
+                total_min_must += demand_ln / chain_yield
+            min_pr_runs = math.ceil(total_min_must / (max_b_pr * rho_m_pr))
+            min_pr_runs = min(
+                min_pr_runs,
+                task_valid_event_count.get("Pr", min_pr_runs),
+                int(pyo.value(model.task_imax["Pr"])),
+            )
+            if min_pr_runs >= 2:
+                model.A06_min_Pr = pyo.Constraint(
+                    expr=sum(
+                        active_disjuncts["Pr", n].binary_indicator_var for n in model.n
+                    )
+                    >= min_pr_runs
+                )
+                print(f"  [A06_min_Pr] Pr activations >= {min_pr_runs}")
+
+    if min_act_indices:
+        model.A06_min = pyo.Constraint(
+            min_act_indices,
+            rule=lambda m, i: sum(
+                active_disjuncts[i, n].binary_indicator_var for n in m.n
+            )
+            >= min_act_rhs[i],
+        )
+        print(
+            f"  [A06_min] Added min-activation cuts for {len(min_act_indices)} tasks: "
+            + ", ".join(f"{i}>={min_act_rhs[i]}" for i in min_act_indices)
+        )
+    # A09/A10: Unit event sequencing (non-pool units only)
     model.A09 = pyo.Constraint(
-        model.j,
+        j_nonpool,
         [n for n in model.n if n < n_max],
         rule=lambda m, j, n: m.Tsj[j, n + 1] >= m.Tfj[j, n],
     )
     model.A10 = pyo.Constraint(
-        model.j, model.n, rule=lambda m, j, n: m.Tfj[j, n] >= m.Tsj[j, n]
+        j_nonpool, model.n, rule=lambda m, j, n: m.Tfj[j, n] >= m.Tsj[j, n]
     )
 
     # Persistence
@@ -765,58 +1203,20 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         model.tc1, [n for n in model.n if n < n_max], rule=A13a_rule
     )
 
-    def A13b_rule(model, i, ip, n):
-        return (
-            active_disjuncts[ip, n + 1].binary_indicator_var
-            == active_disjuncts[i, n].binary_indicator_var
-        )
-
-    model.A13b = pyo.Constraint(
-        [
-            (i, ip, n)
-            for i, ip in model.tc2
-            for n in model.n
-            if n < n_max and model.MustUseEcobulk == 1
-        ],
-        rule=A13b_rule,
-    )
-
-    def A13c_rule(model, i, ip, n):
-        return (
-            active_disjuncts[ip, n + 1].binary_indicator_var
-            <= active_disjuncts[i, n].binary_indicator_var
-        )
-
-    model.A13c = pyo.Constraint(
-        [
-            (i, ip, n)
-            for i, ip in model.tc2
-            for n in model.n
-            if n < n_max and model.MustUseEcobulk != 1
-        ],
-        rule=A13c_rule,
-    )
-
-    # Storage unit persistence: y_{i,j,n} implies y_{i,j,n+1} (linear form, Eq. 2.3)
-    model.A15 = pyo.Constraint(
-        [
-            (i, j, n)
-            for i in model.ist
-            for j in model.j
-            for n in model.n
-            if (i, j) in model.ij and n < n_max
-        ],
-        rule=lambda m, i, j, n: m.y[i, j, n + 1] >= m.y[i, j, n],
-    )
-    model.A17 = pyo.Constraint(
-        [s for s in model.SFISEco if model.MustUseEcobulk == 1],
-        rule=lambda m, s: sum(
-            active_disjuncts[i, n].binary_indicator_var
-            for i in m.i
-            for n in m.n
-            if (i, s) in m.ICS
-        )
-        >= 1,
+    # Ecobulk Alm max duration: 720 h (1 month). Big-M relaxed when y[i,j,n]=0.
+    # TODO: Update Alm
+    all_alm = list(model.iAlmInt)
+    eco_alm_index = [
+        (i, j, n)
+        for i in all_alm
+        for j in model.JECO
+        for n in model.n
+        if (i, j) in model.ij_nonpool
+    ]
+    model.A_eco_alm_max = pyo.Constraint(
+        eco_alm_index,
+        rule=lambda m, i, j, n: m.Tf[i, n] - m.Ts[i, n]
+        <= 720 + pyo.value(m.H) * (1 - m.y[i, j, n]),
     )
 
     # Ends
@@ -838,41 +1238,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.A21 = pyo.Constraint(
         model.ipst, [n_max], rule=lambda m, i, n: m.Tf[i, n] <= m.MS
     )
-    model.A22 = pyo.Constraint(
-        rule=lambda m: m.JST_unused
-        == m.nJST
-        - sum(m.y[i, j, n_max] for j in m.JST for i in m.ist if (i, j) in m.ij)
-    )
-
-    def A23_rule(model, j, i):
-        used = sum(model.bj[i, j, n] for n in model.n)
-        used_flag = sum(model.y[i, j, n] for n in model.n)
-        return model.Freespace[j] <= model.Bmax[i, j] - used + model.Bmax[i, j] * (
-            1 - used_flag
-        )
-
-    model.A23 = pyo.Constraint(
-        model.JST,
-        model.ist,
-        rule=lambda m, j, i: A23_rule(m, j, i)
-        if (i, j) in m.ij
-        else pyo.Constraint.Skip,
-    )
-
-    def A24_rule(model, j, i):
-        used = sum(model.bj[i, j, n] for n in model.n)
-        used_flag = sum(model.y[i, j, n] for n in model.n)
-        return model.Freespace[j] >= model.Bmax[i, j] - used - model.Bmax[i, j] * (
-            1 - used_flag
-        )
-
-    model.A24 = pyo.Constraint(
-        model.JST,
-        model.ist,
-        rule=lambda m, j, i: A24_rule(m, j, i)
-        if (i, j) in m.ij
-        else pyo.Constraint.Skip,
-    )
+    model.A22 = pyo.Constraint(rule=lambda m: m.JST_unused == m.nJST)
 
     # Products with an aging stage are not subject to the lateness penalty
     aging_products = set(aging_task_by_product.keys())
@@ -883,9 +1249,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         if product in aging_products:
             continue
         i_last = line_lateness_task[line]
-        # Tightest Big-M is achieved when the task is inactive Tf <= H is always
-        # satisfied, so M only needs to cover H - Deadline
-        M_late = pyo.value(model.H) - pyo.value(model.Deadline)
+        M_late = task_LF[i_last] - pyo.value(model.Deadline)
         for n in model.n:
             model.LateDefByProduct.add(
                 model.Tf[i_last, n]
@@ -905,28 +1269,25 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     assign_disjuncts = {}
 
     for i in model.i:
-        compatible_units = [j for j in model.j if (i, j) in model.ij]
+        # Non-pool tasks have explicit unit-selection disjunctions
+        # Pool tasks (barriques/jars) use integer count vars so we don't need nested disjuncts needed.
+        compatible_units = (
+            []
+            if i in pool_tasks
+            else [j for j in model.j if (i, j) in model.ij_nonpool]
+        )
         for n in model.n:
             # Retrieve pre-created disjuncts, binary_indicator_var IS W_{i,n}
             d_active = active_disjuncts[i, n]
 
-            # Duration equation for non-storage tasks only.
-            # Storage persistence is enforced through logical assignment/activity
-            # persistence across events, not by forcing Tf = H.
-            if i not in model.ist:
-                add_constr(
-                    d_active,
-                    "duration",
-                    model.Tf[i, n]
-                    == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
-                )
+            add_constr(
+                d_active,
+                "duration",
+                model.Tf[i, n]
+                == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
+            )
 
-            # Terminal storage event: if active at n_max, enforce Tf == MS locally.
-            if i in model.ist and n == n_max:
-                add_constr(d_active, "horizon_sync_lb", model.Tf[i, n_max] >= model.MS)
-                add_constr(d_active, "horizon_sync_ub", model.Tf[i, n_max] <= model.MS)
-
-            # Nested unit selection: ⋁_{j in J_i}
+            # Nested unit selection: ⋁_{j in J_i}, skipped for pool tasks
             for j in compatible_units:
                 d_assign = gdp.Disjunct()
                 d_skip = gdp.Disjunct()
@@ -936,8 +1297,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
                 # Assign: y=1, batch limits, time sync
                 add_constr(d_assign, "y_on", model.y[i, j, n] == 1)
-                add_constr(d_assign, "bmin", model.bj[i, j, n] >= model.Bmin[i, j])
-                add_constr(d_assign, "bmax", model.bj[i, j, n] <= model.Bmax[i, j])
+                if pyo.value(model.Bmin[i, j]) == pyo.value(model.Bmax[i, j]):
+                    # Fixed-capacity unit
+                    add_constr(
+                        d_assign, "bfixed", model.bj[i, j, n] == model.Bmin[i, j]
+                    )
+                else:
+                    add_constr(d_assign, "bmin", model.bj[i, j, n] >= model.Bmin[i, j])
+                    add_constr(d_assign, "bmax", model.bj[i, j, n] <= model.Bmax[i, j])
                 add_constr(d_assign, "sync_ts", model.Tsj[j, n] == model.Ts[i, n])
                 add_constr(d_assign, "sync_tf", model.Tfj[j, n] == model.Tf[i, n])
 
@@ -954,12 +1321,20 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
             add_constr(d_inactive, "b_zero", model.b[i, n] == 0)
             add_constr(d_inactive, "duration", model.Tf[i, n] == model.Ts[i, n])
+            # Symmetry breaking: collapse idle event to previous event time.
+            # Prevents Ts[i,n] floating freely in [0, H] when nothing happens.
+            if n > 1:
+                add_constr(
+                    d_inactive, "ts_collapse", model.Ts[i, n] == model.Tf[i, n - 1]
+                )
 
-            d_inactive.y_zero = pyo.ConstraintList()
-            d_inactive.bj_zero = pyo.ConstraintList()
-            for j in compatible_units:
-                d_inactive.y_zero.add(model.y[i, j, n] == 0)
-                d_inactive.bj_zero.add(model.bj[i, j, n] == 0)
+            # y_zero / bj_zero only needed for non-pool tasks
+            if compatible_units:
+                d_inactive.y_zero = pyo.ConstraintList()
+                d_inactive.bj_zero = pyo.ConstraintList()
+                for j in compatible_units:
+                    d_inactive.y_zero.add(model.y[i, j, n] == 0)
+                    d_inactive.bj_zero.add(model.bj[i, j, n] == 0)
 
             # Outer disjunction
             model.add_component(
@@ -967,80 +1342,100 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 gdp.Disjunction(expr=[d_active, d_inactive]),
             )
 
-    # A03: At most one task per unit per event
-    model.A03 = pyo.Constraint(
-        model.j,
-        model.n,
-        rule=lambda m, j, n: sum(m.y[i, j, n] for i in m.i if (i, j) in m.ij) <= 1,
-    )
-
-    # Symmetry-breaking for indexed vessel pools: use lower index before higher.
-    barrique_pairs = list(zip(barrique_units_ordered[:-1], barrique_units_ordered[1:]))
-    if barrique_pairs:
-        # Cumulative (cross-event) symmetry-breaking: barrique j_next cannot be
-        # first used before barrique j_prev across the whole horizon.
-        model.BarriqueSymmetryBreak = pyo.Constraint(
-            barrique_pairs,
-            model.n,
-            rule=lambda m, j_prev, j_next, n: sum(
-                m.y[i, j_next, n_prime]
-                for i in m.i
-                for n_prime in m.n
-                if (i, j_next) in m.ij and n_prime <= n
-            )
-            <= sum(
-                m.y[i, j_prev, n_prime]
-                for i in m.i
-                for n_prime in m.n
-                if (i, j_prev) in m.ij and n_prime <= n
-            ),
-        )
-
-    jar_pairs = list(zip(jar_units_ordered[:-1], jar_units_ordered[1:]))
-    if jar_pairs:
-        model.JarSymmetryBreak = pyo.Constraint(
-            jar_pairs,
-            model.n,
-            rule=lambda m, j_prev, j_next, n: sum(
-                m.y[i, j_next, n_prime]
-                for i in m.i
-                for n_prime in m.n
-                if (i, j_next) in m.ij and n_prime <= n
-            )
-            <= sum(
-                m.y[i, j_prev, n_prime]
-                for i in m.i
-                for n_prime in m.n
-                if (i, j_prev) in m.ij and n_prime <= n
-            ),
-        )
-
-    # Barrique reuse constraints: if a barrique is reused at a later event,
-    # enforce a 1h minimum wait (cleaning) and a 24h maximum idle time
-    # (barrique cannot sit empty for more than 24h or it deteriorates).
-    barrique_reuse_index = [
-        (j, i_prev, n_prev, i_next, n_next)
-        for j in model.JBAR
-        for i_prev in model.i
-        for i_next in model.i
-        for n_prev in model.n
-        for n_next in model.n
-        if (i_prev, j) in model.ij and (i_next, j) in model.ij and n_prev < n_next
+    # A03: At most one task per unit per event (non-pool units only)
+    j_with_tasks = [
+        j for j in j_nonpool if any((i, j) in model.ij_nonpool for i in model.i)
     ]
-    model.BarriqueMinWait = pyo.Constraint(
-        barrique_reuse_index,
-        rule=lambda m, j, i_prev, n_prev, i_next, n_next: m.Ts[i_next, n_next]
-        >= m.Tf[i_prev, n_prev]
-        + 1.0
-        - m.H * (2 - m.y[i_prev, j, n_prev] - m.y[i_next, j, n_next]),
+    model.A03 = pyo.Constraint(
+        j_with_tasks,
+        model.n,
+        rule=lambda m, j, n: sum(m.y[i, j, n] for i in m.i if (i, j) in m.ij_nonpool)
+        <= 1,
     )
-    model.BarriqueMaxIdle = pyo.Constraint(
-        barrique_reuse_index,
-        rule=lambda m, j, i_prev, n_prev, i_next, n_next: m.Ts[i_next, n_next]
-        <= m.Tf[i_prev, n_prev]
-        + 24.0
-        + m.H * (2 - m.y[i_prev, j, n_prev] - m.y[i_next, j, n_next]),
-    )
+
+    # ========================================
+    # TASK-PAIR BIG-M COMPUTATION
+    # ========================================
+    # M[i_prod, i_cons] = LF[i_prod] - ES[i_cons]
+    def M_ge(i_prod: str, i_cons: str) -> float:
+        """Big-M for Ts[cons] >= Tf[prod] - M*(2-W_prod-W_cons)."""
+        return max(0.0, task_LF[i_prod] - task_ES[i_cons])
+
+    def M_le(i_prod: str, i_cons: str) -> float:
+        """Big-M for Ts[cons] <= Tf[prod] + M*(2-W_prod-W_cons)."""
+        return max(0.0, task_LF[i_cons] - task_ES[i_prod])
+
+    def M_bar_max(i_prev: str, i_next: str) -> float:
+        """Big-M for BarriqueMaxIdle: Ts[next] <= Tf[prev]+24 + M*(1-IsHandoff)."""
+        return max(0.0, task_LF[i_next] - task_ES[i_prev] - 24.0)
+
+    def M_bar_ge(i_prev: str, i_next: str) -> float:
+        """Big-M for handoff timing: Ts[next] >= Tf[prev] - M*(1-IsHandoff)."""
+        return max(0.0, task_LF[i_prev] - task_ES[i_next])
+
+    if barr_cross:
+        model.BarrSeqFwdCon = pyo.Constraint(
+            barr_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Tf[i1, n1]
+            <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * (1 - m.BarrSeqFwd[i1, n1, i2, n2]),
+        )
+        model.BarrSeqRevCon = pyo.Constraint(
+            barr_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Tf[i2, n2]
+            <= m.Ts[i1, n1] + M_bar_ge(i2, i1) * (1 - m.BarrSeqRev[i1, n1, i2, n2]),
+        )
+        model.BarrCapacityCross = pyo.Constraint(
+            barr_cross,
+            rule=lambda m, i1, n1, i2, n2: m.NumBarr[i1, n1] + m.NumBarr[i2, n2]
+            <= n_barr
+            + n_barr * (m.BarrSeqFwd[i1, n1, i2, n2] + m.BarrSeqRev[i1, n1, i2, n2]),
+        )
+        model.BarriqueMaxIdle = pyo.Constraint(
+            barr_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
+            <= m.Tf[i1, n1]
+            + 24.0
+            + M_bar_max(i1, i2) * (1 - m.BarrSeqFwd[i1, n1, i2, n2]),
+        )
+        model.BarriqueMaxIdleRev = pyo.Constraint(
+            barr_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
+            <= m.Tf[i2, n2]
+            + 24.0
+            + M_bar_max(i2, i1) * (1 - m.BarrSeqRev[i1, n1, i2, n2]),
+        )
+
+    if jar_cross:
+        model.JarSeqFwdCon = pyo.Constraint(
+            jar_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Tf[i1, n1]
+            <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * (1 - m.JarSeqFwd[i1, n1, i2, n2]),
+        )
+        model.JarSeqRevCon = pyo.Constraint(
+            jar_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Tf[i2, n2]
+            <= m.Ts[i1, n1] + M_bar_ge(i2, i1) * (1 - m.JarSeqRev[i1, n1, i2, n2]),
+        )
+        model.JarCapacityCross = pyo.Constraint(
+            jar_cross,
+            rule=lambda m, i1, n1, i2, n2: m.NumJar[i1, n1] + m.NumJar[i2, n2]
+            <= n_jar
+            + n_jar * (m.JarSeqFwd[i1, n1, i2, n2] + m.JarSeqRev[i1, n1, i2, n2]),
+        )
+        model.JarMaxIdle = pyo.Constraint(
+            jar_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
+            <= m.Tf[i1, n1]
+            + 24.0
+            + M_bar_max(i1, i2) * (1 - m.JarSeqFwd[i1, n1, i2, n2]),
+        )
+        model.JarMaxIdleRev = pyo.Constraint(
+            jar_cross,
+            rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
+            <= m.Tf[i2, n2]
+            + 24.0
+            + M_bar_max(i2, i1) * (1 - m.JarSeqRev[i1, n1, i2, n2]),
+        )
 
     # ========================================
     # PRECEDENCE (Conditional Constraints, Eq. 2.2)
@@ -1056,7 +1451,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         ],
         rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
         >= m.Tf[i_prod, n]
-        - m.H
+        - M_ge(i_prod, i_cons)
         * (
             2
             - active_disjuncts[i_prod, n].binary_indicator_var
@@ -1079,7 +1474,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         ],
         rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
         <= m.Tf[i_prod, n]
-        + m.H
+        + M_le(i_prod, i_cons)
         * (
             2
             - active_disjuncts[i_prod, n].binary_indicator_var
@@ -1091,18 +1486,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # STORAGE PERSISTENCE (Logical Implications, Eq. 2.3)
     # ========================================
 
-    # Y_{i,n} implies Y_{i,n+1}  for all i in I^st, n < N
-    for i in model.ist:
-        for n in model.n:
-            if n < n_max:
-                model.add_component(
-                    f"persist_task_{i}_{n}",
-                    pyo.LogicalConstraint(
-                        expr=active_disjuncts[i, n].indicator_var.implies(
-                            active_disjuncts[i, n + 1].indicator_var
-                        )
-                    ),
-                )
+    # TODO: Update storage and storage persistance
 
     # ========================================
     # OBJECTIVE FUNCTION
@@ -1129,6 +1513,11 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             if (i, s) in model.ICS
         )
     )
+    model.GrapeSkinRevenue = pyo.Expression(
+        expr=model.GrapeSkinValue * model.FinalProd["grape_skin"]
+        if has_pressing
+        else 0.0
+    )
 
     # Exact linearization of alpha[i] * bj[i,j,n] * W[i,n] for non-storage tasks.
     # W is binary, so the McCormick envelope is exact at integer points.
@@ -1139,10 +1528,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for i in model.inst
             for j in model.j
             for n in model.n
-            if (i, j) in model.ij
+            if (i, j) in model.ij_nonpool
         ],
     )
-    model.zAlphaCooling = pyo.Var(model.alpha_cooling_index, domain=pyo.NonNegativeReals)
+    model.zAlphaCooling = pyo.Var(
+        model.alpha_cooling_index, domain=pyo.NonNegativeReals
+    )
 
     model.AlphaCoolingLin_lb = pyo.Constraint(
         model.alpha_cooling_index,
@@ -1160,46 +1551,65 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         <= m.Bmax[i, j] * active_disjuncts[i, n].binary_indicator_var,
     )
 
-    # For non-storage tasks the hull transformation enforces globally:
-    #   Tf[i,n] - Ts[i,n] = alpha[i]*W[i,n] + beta[i]*b[i,n]
-    # Substituting eliminates Tf and Ts from the bilinear product, replacing
-    # variables with range [0, H] with W in [0,1] and b in [0,b_ub].
+    # beta=0 is validated above, so cooling time = alpha[i] * W[i,n] only.
+    # zAlphaCooling linearizes bj[i,j,n] * W[i,n] exactly (W is binary).
     def cooling_term(i, j, n):
-        bj = model.bj[i, j, n]
         if i in model.inst:
-            return (
-                model.alpha[i] * model.zAlphaCooling[i, j, n]
-                + model.beta[i] * bj * model.b[i, n]
-            )
-        # Exclude Alm storage cooling from the objective to keep a MILP model.
+            return model.alpha[i] * model.zAlphaCooling[i, j, n]
         return 0.0
 
     model.CoolingCost = pyo.Expression(
         expr=model.costCooling
         * sum(
             cooling_term(i, j, n)
-            for (i, j) in model.ij
+            for (i, j) in model.ij_nonpool
             if j in model.JEXT
             for n in model.n
         )
     )
 
+    model.DiscardCost = pyo.Expression(
+        expr=model.penaltyDiscard
+        * sum(model.Discard[s, n] for s in model.SI for n in model.n)
+    )
+
+    model.PenaltyUnused = pyo.Expression(
+        expr=model.penaltyEmptyTank * model.inv_nJST * model.JST_unused
+    )
+    model.PenaltySpace = pyo.Expression(
+        expr=model.penaltyAir
+        * model.inv_total_avg_range
+        * sum(model.Freespace[j] for j in model.JST)
+    )
+    model.MakespanPenalty = pyo.Expression(expr=model.penaltyMS * model.MS)
+    # epsilon-trick: tiny penalty pulling all task start times as early as possible.
+    # Breaks the degeneracy of "floating" tasks that can shift freely without
+    # changing the objective.
+    model.TimePullPenalty = pyo.Expression(
+        expr=1e-6 * sum(model.Ts[i, n] for i in model.i for n in model.n)
+    )
+    model.Profit = pyo.Expression(
+        expr=model.Revenue
+        + model.GrapeSkinRevenue
+        - model.OutsourcingCost
+        - model.RawMaterialCost
+        - model.LatenessCost
+        - model.DiscardCost
+    )
+
     def obj_func(model):
-        penalty_unused = model.penaltyEmptyTank * model.inv_nJST * model.JST_unused
-        penalty_space = (
-            model.penaltyAir
-            * model.inv_total_avg_range
-            * sum(model.Freespace[j] for j in model.JST)
-        )
         return (
-            model.Revenue
+            # model.Revenue
+            +model.GrapeSkinRevenue
             - model.OutsourcingCost
             - model.LatenessCost
             - model.RawMaterialCost
-            - penalty_unused
-            - penalty_space
-            - model.penaltyMS * model.MS
+            - model.PenaltyUnused
+            - model.PenaltySpace
+            - model.MakespanPenalty
             - model.CoolingCost
+            - model.DiscardCost
+            - model.TimePullPenalty
         )
 
     model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.maximize)
@@ -1209,8 +1619,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # ========================================
     # The helper must be called after y / Bmin / Bmax are fully
     # initialised and before the GDP transformation flattens the disjuncts.
-    if transformation_type == "bigm":
-        add_cover_cuts(model)
+    add_cover_cuts(model)
 
     print(f"Applying GDP {transformation_type} transformation...")
     pyo.TransformationFactory(f"gdp.{transformation_type}").apply_to(model)
@@ -1225,7 +1634,6 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
         return None
 
     # Set solver options
-    solver.options["NonConvex"] = 2  # Required for bilinear cooling cost term
     solver.options["TimeLimit"] = time_limit
     solver.options["MIPGap"] = 0.001
     solver.options["MIPFocus"] = 2
@@ -1243,18 +1651,43 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
     ):
         print(f"Objective: {pyo.value(model.OBJ, exception=False)}")
         if hasattr(model, "Revenue"):
-            print(f"Revenue: {pyo.value(model.Revenue, exception=False)}")
             print(
-                f"Outsourcing Cost: {pyo.value(model.OutsourcingCost, exception=False)}"
-            )
-            print(f"Lateness Cost: {pyo.value(model.LatenessCost, exception=False)}")
-            print(
-                f"Raw Material Cost: {pyo.value(model.RawMaterialCost, exception=False)}"
+                f"Profit:              {pyo.value(model.Profit, exception=False):.2f}"
             )
             print(
-                f"Makespan Penalty: {pyo.value(model.penaltyMS * model.MS, exception=False)}"
+                f"  Revenue:           {pyo.value(model.Revenue, exception=False):.2f}"
             )
-            print(f"Cooling Cost: {pyo.value(model.CoolingCost, exception=False)}")
+            print(
+                f"  Grape Skin Rev:    {pyo.value(model.GrapeSkinRevenue, exception=False):.2f}"
+            )
+            print(
+                f"  Outsourcing Cost: -{pyo.value(model.OutsourcingCost, exception=False):.2f}"
+            )
+            print(
+                f"  Raw Material Cost:-{pyo.value(model.RawMaterialCost, exception=False):.2f}"
+            )
+            print(
+                f"  Lateness Cost:    -{pyo.value(model.LatenessCost, exception=False):.2f}"
+            )
+            print(
+                f"  Discard Cost:     -{pyo.value(model.DiscardCost, exception=False):.2f}"
+            )
+            print("Penalties:")
+            print(
+                f"  Empty Tank:       -{pyo.value(model.PenaltyUnused, exception=False):.2f}"
+            )
+            print(
+                f"  Air Space:        -{pyo.value(model.PenaltySpace, exception=False):.2f}"
+            )
+            print(
+                f"  Makespan:         -{pyo.value(model.MakespanPenalty, exception=False):.2f}"
+            )
+            print(
+                f"  Cooling:          -{pyo.value(model.CoolingCost, exception=False):.2f}"
+            )
+            print(
+                f"  Time Pull:        -{pyo.value(model.TimePullPenalty, exception=False):.2f}"
+            )
         export_results(
             model,
             "Wine Scheduling Economic GDP",
