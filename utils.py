@@ -54,7 +54,20 @@ def export_results(model, model_name, filename=None):
         if hasattr(model, "W"):
             return pyo.value(model.W[i, n]) > 0.5
         d_act = model.find_component(f"d_act_{i}_{n}")
-        return d_act is not None and pyo.value(d_act.binary_indicator_var) > 0.5
+        if d_act is not None:
+            try:
+                val = pyo.value(d_act.binary_indicator_var)
+                if val is not None:
+                    return val > 0.5
+            except Exception:
+                pass
+        ij_ref = getattr(model, "ij_nonpool", model.ij)
+        has_ij = any((i, j) in ij_ref for j in model.j)
+        if has_ij:
+            return any(
+                pyo.value(model.y[i, j, n]) > 0.5 for j in model.j if (i, j) in ij_ref
+            )
+        return pyo.value(model.b[i, n]) > 1e-3
 
     task_schedule = []
     for i in model.i:
@@ -64,14 +77,36 @@ def export_results(model, model_name, filename=None):
                 end = pyo.value(model.Tf[i, n])
                 batch = pyo.value(model.b[i, n])
                 units_used = []
-                for j in model.j:
-                    if (i, j) in model.ij and pyo.value(model.y[i, j, n]) > 0.5:
+                iBAR = set(model.iBAR) if hasattr(model, "iBAR") else set()
+                iJAR = set(model.iJAR) if hasattr(model, "iJAR") else set()
+                if i in iBAR and hasattr(model, "NumBarr"):
+                    num = int(round(pyo.value(model.NumBarr[i, n])))
+                    if num > 0:
                         units_used.append(
                             {
-                                "unit": j,
-                                "batch": pyo.value(model.bj[i, j, n]),
+                                "unit": f"barriquex{num}",
+                                "batch": pyo.value(model.b[i, n]) / num,
                             }
                         )
+                elif i in iJAR and hasattr(model, "NumJar"):
+                    num = int(round(pyo.value(model.NumJar[i, n])))
+                    if num > 0:
+                        units_used.append(
+                            {
+                                "unit": f"jarx{num}",
+                                "batch": pyo.value(model.b[i, n]) / num,
+                            }
+                        )
+                else:
+                    ij_ref = getattr(model, "ij_nonpool", model.ij)
+                    for j in model.j:
+                        if (i, j) in ij_ref and pyo.value(model.y[i, j, n]) > 0.5:
+                            units_used.append(
+                                {
+                                    "unit": j,
+                                    "batch": pyo.value(model.bj[i, j, n]),
+                                }
+                            )
                 stage, line = split_task(i)
                 product_key = line_product.get(line)
                 task_schedule.append(
@@ -106,14 +141,53 @@ def export_results(model, model_name, filename=None):
         f.write(f"Objective Value: {obj_val:.4f}\n")
 
         # Economic KPI components (when available)
+        if hasattr(model, "Profit"):
+            f.write(f"Profit: {pyo.value(model.Profit):.4f}\n")
         if hasattr(model, "Revenue"):
             f.write(f"Revenue: {pyo.value(model.Revenue):.4f}\n")
+        if hasattr(model, "GrapeSkinRevenue"):
+            f.write(f"Grape Skin Revenue: {pyo.value(model.GrapeSkinRevenue):.4f}\n")
         if hasattr(model, "OutsourcingCost"):
             f.write(f"Outsourcing Cost: {pyo.value(model.OutsourcingCost):.4f}\n")
         if hasattr(model, "RawMaterialCost"):
             f.write(f"Raw Material Cost: {pyo.value(model.RawMaterialCost):.4f}\n")
         if hasattr(model, "LatenessCost"):
             f.write(f"Lateness Cost: {pyo.value(model.LatenessCost):.4f}\n")
+        discard_by_product: dict = {}
+        if hasattr(model, "DiscardCost"):
+            discard_cost = pyo.value(model.DiscardCost)
+            if (
+                hasattr(model, "Discard")
+                and hasattr(model, "SI")
+                and hasattr(model, "n")
+            ):
+                from collections import defaultdict
+
+                _prod_discard: dict = defaultdict(float)
+                for s in model.SI:
+                    line = "".join(ch for ch in str(s) if ch.isdigit())
+                    if line:
+                        product_key = line_product.get(line)
+                        if product_key:
+                            for n in model.n:
+                                _prod_discard[product_key] += pyo.value(
+                                    model.Discard[s, n]
+                                )
+                discard_by_product = dict(_prod_discard)
+                total_discarded = sum(discard_by_product.values())
+            else:
+                total_discarded = 0.0
+            f.write(
+                f"Discard Cost: {discard_cost:.4f} ({total_discarded:.2f} L discarded)\n"
+            )
+        if hasattr(model, "PenaltyUnused"):
+            f.write(f"Penalty Empty Tank: {pyo.value(model.PenaltyUnused):.4f}\n")
+        if hasattr(model, "PenaltySpace"):
+            f.write(f"Penalty Air Space: {pyo.value(model.PenaltySpace):.4f}\n")
+        if hasattr(model, "MakespanPenalty"):
+            f.write(f"Penalty Makespan: {pyo.value(model.MakespanPenalty):.4f}\n")
+        if hasattr(model, "CoolingCost"):
+            f.write(f"Cooling Cost: {pyo.value(model.CoolingCost):.4f}\n")
 
         # Makespan
         ms = pyo.value(model.MS)
@@ -219,6 +293,14 @@ def export_results(model, model_name, filename=None):
                 product_name = str(meta.get("name", product_key)).replace(",", " ")
                 category = str(meta.get("category", "Unknown")).replace(",", " ")
                 f.write(f"{line},{product_key},{product_name},{category}\n")
+
+        # Per-product discard
+        if discard_by_product:
+            f.write(f"\n{sep}\n")
+            f.write("DISCARD DATA (product,discarded_L):\n")
+            f.write(f"{'-' * 80}\n")
+            for product_key, discarded_vol in sorted(discard_by_product.items()):
+                f.write(f"{product_key},{discarded_vol:.4f}\n")
 
     print(f"Results exported to {filename}")
     return task_schedule
