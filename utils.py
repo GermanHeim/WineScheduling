@@ -221,8 +221,9 @@ def export_results(model, model_name, filename=None):
         #     f.write(f"Lateness: {lateness:.2f} hours ({lateness / 24:.2f} days)\n")
 
         # Unused storage units
-        unused = pyo.value(model.JST_unused)
-        f.write(f"\nUnused storage units: {unused:.0f}\n")
+        if hasattr(model, "JST_unused"):
+            unused = pyo.value(model.JST_unused)
+            f.write(f"\nUnused storage units: {unused:.0f}\n")
 
         # Final production
         f.write(f"\n{sep}\n")
