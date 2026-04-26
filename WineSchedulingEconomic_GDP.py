@@ -200,11 +200,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.JBAR = pyo.Set(initialize=unit_instances_by_base.get("barrique", []))
     model.JJAR = pyo.Set(initialize=unit_instances_by_base.get("jar", []))
 
-    model.nJST = pyo.Param(initialize=len(model.JST))
-    model.inv_nJST = pyo.Param(
-        initialize=1 / len(model.JST) if len(model.JST) > 0 else 0.0
-    )
-
     # Task-unit pairs (ij)
     ij_data = []
     for task in tasks:
@@ -451,8 +446,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             f"but beta != 0 for: {bad_cooling_tasks}. "
         )
 
-    total_avg_range_value = 1.0
-
     model.H = pyo.Param(initialize=params["global"]["H"])
 
     model.rhoIScons = pyo.Param(model.i, model.s, mutable=True, default=0)
@@ -534,18 +527,11 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         default=0.0,
     )
 
-    model.penaltyEmptyTank = pyo.Param(initialize=params["global"]["penaltyEmptyTank"])
-    model.penaltyAir = pyo.Param(initialize=params["global"]["penaltyAir"])
-    model.penaltyMaxUtilization = pyo.Param(
-        initialize=params["global"]["penaltyMaxUtilization"]
-    )
     model.penaltyMS = pyo.Param(initialize=params["global"].get("penaltyMS", 0.0))
     model.costCooling = pyo.Param(initialize=params["global"].get("costCooling", 0.0))
     model.penaltyDiscard = pyo.Param(initialize=global_cfg.get("penaltyDiscard", 3.0))
     model.GrapeSkinValue = pyo.Param(initialize=global_cfg.get("grape_skin_value", 0.0))
     imax_young = int(global_cfg.get("iMaxYoungWine", 1))
-    model.total_avg_range = pyo.Param(initialize=total_avg_range_value, mutable=False)
-    model.inv_total_avg_range = pyo.Param(initialize=1 / total_avg_range_value)
 
     # Sparse Index Sets
     n_max = max(model.n)
@@ -665,8 +651,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.Outsource = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
     model.LatenessProd = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
-    model.JST_unused = pyo.Var(domain=pyo.NonNegativeReals)
-    model.Freespace = pyo.Var(model.j, domain=pyo.NonNegativeReals)
     model.Discard = pyo.Var(model.SI, model.n, domain=pyo.NonNegativeReals)
     for s in model.SI:
         discard_ub = max(
@@ -766,14 +750,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     for s in model.SMarket:
         model.LatenessProd[s].setub(late_ub)
         model.Outsource[s].setub(pyo.value(model.D[s]))
-    model.JST_unused.setub(pyo.value(model.nJST))
-    for j in model.j:
-        freespace_ub = max(
-            (pyo.value(model.Bmax[i, j]) for i in model.i if (i, j) in model.ij),
-            default=0.0,
-        )
-        model.Freespace[j].setub(freespace_ub)
-
     # Per-task time window bounds derived from minimum cumulative step durations.
     # earliest_start[k] = sum of alpha for all steps before k (can't start earlier).
     # latest_finish[k] = H - sum of alpha for all steps after k (must leave room).
@@ -1238,7 +1214,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.A21 = pyo.Constraint(
         model.ipst, [n_max], rule=lambda m, i, n: m.Tf[i, n] <= m.MS
     )
-    model.A22 = pyo.Constraint(rule=lambda m: m.JST_unused == m.nJST)
 
     # Products with an aging stage are not subject to the lateness penalty
     aging_products = set(aging_task_by_product.keys())
@@ -1573,14 +1548,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         * sum(model.Discard[s, n] for s in model.SI for n in model.n)
     )
 
-    model.PenaltyUnused = pyo.Expression(
-        expr=model.penaltyEmptyTank * model.inv_nJST * model.JST_unused
-    )
-    model.PenaltySpace = pyo.Expression(
-        expr=model.penaltyAir
-        * model.inv_total_avg_range
-        * sum(model.Freespace[j] for j in model.JST)
-    )
     model.MakespanPenalty = pyo.Expression(expr=model.penaltyMS * model.MS)
     # epsilon-trick: tiny penalty pulling all task start times as early as possible.
     # Breaks the degeneracy of "floating" tasks that can shift freely without
@@ -1604,8 +1571,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             - model.OutsourcingCost
             - model.LatenessCost
             - model.RawMaterialCost
-            - model.PenaltyUnused
-            - model.PenaltySpace
             - model.MakespanPenalty
             - model.CoolingCost
             - model.DiscardCost
@@ -1673,12 +1638,6 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
                 f"  Discard Cost:     -{pyo.value(model.DiscardCost, exception=False):.2f}"
             )
             print("Penalties:")
-            print(
-                f"  Empty Tank:       -{pyo.value(model.PenaltyUnused, exception=False):.2f}"
-            )
-            print(
-                f"  Air Space:        -{pyo.value(model.PenaltySpace, exception=False):.2f}"
-            )
             print(
                 f"  Makespan:         -{pyo.value(model.MakespanPenalty, exception=False):.2f}"
             )

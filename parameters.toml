@@ -15,9 +15,6 @@
     penaltyLate = 250 # Penalty for being late ($/hour delayed past deadline)
 
     # Technical penalty weights for profit optimization (all in USD)
-    penaltyMaxUtilization = 100.0 # Penalty for not utilizing tanks fully
-    penaltyEmptyTank = 5000.0     # Penalty for leaving tanks empty
-    penaltyAir = 1000.0           # Penalty for leaving air in tanks
     penaltyMS = 0.05              # Penalty per hour of makespan
     costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
     grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
