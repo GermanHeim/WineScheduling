@@ -713,8 +713,9 @@ This handles within-event conflicts. Cross-event conflicts (tasks at different e
 
 After static preprocessing (event-range fixing), let $\mathcal{P}^{Bar}$ be the set of unordered pairs of barrique task-events that are not provably inactive:
 
-$$\mathcal{P}^{Bar} = \bigl\{\{(i_1,n_1),(i_2,n_2)\} : i_1,i_2 \in I^{Bar},\ (i_1,n_1)\ne(i_2,n_2),\ \text{neither fixed inactive}\bigr\}$$
-
+```math
+\mathcal{P}^{Bar} = \bigl\{(i_1,n_1),(i_2,n_2)\} : i_1,i_2 \in I^{Bar},\ (i_1,n_1)\ne(i_2,n_2),\ \text{neither fixed inactive}\bigr\}
+```
 For each pair, two sequencing binaries encode the temporal ordering:
 
 - $z^{fwd}_{i_1,n_1,i_2,n_2} \in \{0,1\}$: 1 if task-event $(i_1,n_1)$ finishes before $(i_2,n_2)$ starts
