@@ -6,6 +6,7 @@ This script defines the wine scheduling optimization model using Pyomo GDP
 improving readability and potentially numerical stability.
 """
 
+import math
 import pyomo.environ as pyo
 import pyomo.gdp as gdp
 import tomllib
@@ -284,8 +285,12 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.task_imax = pyo.Param(
         model.inst, mutable=True, initialize=lambda m, i: m.iMax
     )
-    if "Pr" in model.inst:
-        model.task_imax["Pr"] = sum(1 for l in lines if "Pr" in lines_cfg[l]["steps"])
+    pressing_lines_pr = [ln for ln in lines if "Pr" in lines_cfg[ln]["steps"]]
+    if "Pr" in model.inst and pressing_lines_pr:
+        n_pressing = len(pressing_lines_pr)
+        min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_pr)
+        n_valid_pr = max(model.n) - (min_K_pr - 1)
+        model.task_imax["Pr"] = min(n_pressing, n_valid_pr)
 
     model.ST0 = pyo.Param(model.s, initialize=params["initial_inventory"], default=0)
     model.STmax = pyo.Param(model.s, initialize=0)
@@ -589,6 +594,38 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         rule=lambda m, i: sum(active_disjuncts[i, n].binary_indicator_var for n in m.n)
         <= m.task_imax[i],
     )
+    # A06_min_Pr: Lower bound on Pr activations. No outsourcing in MS model, so all
+    # pressing-line demand must be pressed. ceil(total_min_must / max_must_per_run).
+    if "Pr" in model.inst and pressing_lines_pr:
+        rho_m_pr = (
+            params.get("rho", {}).get("Pr", {}).get("rhoISprod", {}).get("m", 0.0)
+        )
+        max_b_pr = max(
+            pyo.value(model.Bmax["Pr", j]) for j in model.j if ("Pr", j) in model.ij
+        )
+        max_must_per_run = max_b_pr * rho_m_pr
+        if max_must_per_run > 0:
+            total_min_must = 0.0
+            for ln in pressing_lines_pr:
+                demand_ln = params["products"][line_product[ln]]["demand"]
+                chain_yield = 1.0
+                for step in lines_cfg[ln]["steps"]:
+                    if step == "Pr":
+                        continue
+                    rho_entry = params.get("rho", {}).get(f"{step}{ln}", {})
+                    for val in rho_entry.get("rhoISprod", {}).values():
+                        if val < 1.0:
+                            chain_yield *= val
+                total_min_must += demand_ln / chain_yield
+            min_pr_runs = math.ceil(total_min_must / max_must_per_run)
+            if min_pr_runs > 1:
+                model.A06_min_Pr = pyo.Constraint(
+                    expr=sum(
+                        active_disjuncts["Pr", n].binary_indicator_var for n in model.n
+                    )
+                    >= min_pr_runs
+                )
+                print(f"  [A06_min_Pr] Pr activations >= {min_pr_runs}")
     # A06st: Max activations (storage tasks)
     # With persistence (Eq. 2.3), W[i,n] is non-decreasing, so W[i, n_max] suffices.
     model.A06st = pyo.Constraint(
@@ -673,7 +710,6 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         )
         >= 1,
     )
-
     # Ends
     model.A18 = pyo.Constraint(
         model.SP,
@@ -882,8 +918,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     # ========================================
     # The helper must be called after y / Bmin / Bmax are fully
     # initialised and before the GDP transformation flattens the disjuncts.
-    if transformation_type == "bigm":
-        add_cover_cuts(model)
+    add_cover_cuts(model)
 
     print(f"Applying GDP {transformation_type} transformation...")
     pyo.TransformationFactory(f"gdp.{transformation_type}").apply_to(model)
