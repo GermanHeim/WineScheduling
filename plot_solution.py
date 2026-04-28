@@ -1097,9 +1097,11 @@ def plot_solution(
             prev = b_end
         segments.append((prev, xmax))
 
-        widths = [
-            max(math.sqrt(seg_end - seg_start), 1.0) for seg_start, seg_end in segments
-        ]
+        def segment_width(duration: float) -> float:
+            cap = 2400.0
+            return max(cap * (1.0 - math.exp(-duration / cap)), 1.0)
+
+        widths = [segment_width(seg_end - seg_start) for seg_start, seg_end in segments]
         gss = GridSpecFromSubplotSpec(
             1,
             len(segments),
