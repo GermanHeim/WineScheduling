@@ -1,3 +1,4 @@
+# type: ignore
 """
 Wine Scheduling Optimization Model
 
@@ -12,15 +13,11 @@ It also has penalties to encourage efficient use of storage tanks and minimize a
 in tanks.
 """
 
-# pyright: reportAttributeAccessIssue=false
-# pyright: reportOperatorIssue=false
-# pyright: reportArgumentType=false
-# pyright: reportOptionalOperand=false
-# pyright: reportGeneralTypeIssues=false
+import math
 
-import pyomo.environ as pyo  # type: ignore
+import pyomo.environ as pyo
 import tomllib
-from pyomo.opt import SolverFactory  # type: ignore
+from pyomo.opt import SolverFactory
 
 from utils import export_results
 
@@ -315,8 +312,12 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.task_imax = pyo.Param(
         model.inst, mutable=True, initialize=lambda m, i: m.iMax
     )
-    if "Pr" in model.inst:
-        model.task_imax["Pr"] = sum(1 for l in lines if "Pr" in lines_cfg[l]["steps"])
+    pressing_lines_pr = [ln for ln in lines if "Pr" in lines_cfg[ln]["steps"]]
+    if "Pr" in model.inst and pressing_lines_pr:
+        n_pressing = len(pressing_lines_pr)
+        min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_pr)
+        n_valid_pr = max(model.n) - (min_K_pr - 1)
+        model.task_imax["Pr"] = min(n_pressing, n_valid_pr)
 
     # Initial state quantities
     model.ST0 = pyo.Param(model.s, initialize=params["initial_inventory"], default=0)
@@ -856,6 +857,32 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.A06 = pyo.Constraint(model.A06_indices, rule=A06_rule)
 
+    # A06_min_Pr: Lower bound on Pr activations. No outsourcing in MS model, so all
+    # pressing-line demand must be pressed. ceil(total_min_must / max_must_per_run).
+    if "Pr" in model.inst and pressing_lines_pr:
+        rho_m_pr = params.get("rho", {}).get("Pr", {}).get("rhoISprod", {}).get("m", 0.0)
+        max_b_pr = max(pyo.value(model.Bmax["Pr", j]) for j in model.j if ("Pr", j) in model.ij)
+        max_must_per_run = max_b_pr * rho_m_pr
+        if max_must_per_run > 0:
+            total_min_must = 0.0
+            for ln in pressing_lines_pr:
+                demand_ln = params["products"][line_product[ln]]["demand"]
+                chain_yield = 1.0
+                for step in lines_cfg[ln]["steps"]:
+                    if step == "Pr":
+                        continue
+                    rho_entry = params.get("rho", {}).get(f"{step}{ln}", {})
+                    for val in rho_entry.get("rhoISprod", {}).values():
+                        if val < 1.0:
+                            chain_yield *= val
+                total_min_must += demand_ln / chain_yield
+            min_pr_runs = math.ceil(total_min_must / max_must_per_run)
+            if min_pr_runs > 1:
+                model.A06_min_Pr = pyo.Constraint(
+                    expr=sum(model.W["Pr", n] for n in model.n) >= min_pr_runs
+                )
+                print(f"  [A06_min_Pr] Pr activations >= {min_pr_runs}")
+
     # Maximum activations per storage task (A06st)
     # With persistence (A14), W[i,n] is non-decreasing, so checking only the
     # final event W[i, n_max] is sufficient to limit activations.
@@ -942,14 +969,6 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     model.A15 = pyo.Constraint(model.A15_indices, rule=A15_rule)
 
-    # Ecobulk storage constraints (A16)
-    def A16_rule(model, i, ip, s, n):
-        return model.Ts[i, n + 1] <= model.Tf[ip, n] + model.M * (
-            2 - model.W[ip, n] - model.W[i, n + 1]
-        )
-
-    model.A16 = pyo.Constraint(model.EcoPrecedencePairsWithN, rule=A16_rule)
-
     # Must use deposit for ecobulk (A17)
     def A17_rule(model, s):
         return (
@@ -958,6 +977,14 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         )
 
     model.A17 = pyo.Constraint(model.A17_indices, rule=A17_rule)
+
+    # Ecobulk storage constraints (A16)
+    def A16_rule(model, i, ip, s, n):
+        return model.Ts[i, n + 1] <= model.Tf[ip, n] + model.M * (
+            2 - model.W[ip, n] - model.W[i, n + 1]
+        )
+
+    model.A16 = pyo.Constraint(model.EcoPrecedencePairsWithN, rule=A16_rule)
 
     # Final production calculation (A18)
     def A18_rule(model, s, n):
