@@ -492,23 +492,25 @@ This section documents the economic variant implemented in `WineSchedulingEconom
 
 - $Price_s$: selling price of product state $s$
 - $C^{out}_s$: outsourcing cost of product state $s$
-- $Deadline$: target completion time for all production lines
+- $Deadline_k$: ordered campaign deadlines for young wine lines (no aging). Campaign $k$ must finish by $D_k$.
 - $AgingHours_s$: fixed processing duration of the aging step for product $s$ (0 if the product has no aging step)
 - $c^{late}$: lateness penalty coefficient (cost per hour per product)
 - $c^{MS}$: makespan penalty coefficient (cost per hour of schedule length)
 - $c^{cool}$: cooling cost per liter-hour for exterior tanks ($/(L \cdot h)$)
 - $C_s^{raw}$: raw-material cost per liter for shared raw pools $s \in S^R$
 - $c^{discard}$: cost per liter discarded from intermediate states
-- $i_{max}^{young}$ (`iMaxYoungWine`): maximum activations per young wine line. This allows more than one campaing of young wines per campaing of aged wines. When $> 1$, allows multiple separate batches of young wines from the same line within a single schedule. Affects the `Pr` activation ceiling and all tasks in the pressing chain:
+- $i_{max}^{young}$ (`iMaxYoungWine`): number of campaigns for young wine lines. When $> 1$, multiple separate batches of young wines are scheduled within one horizon of aged wines. Demand and upper bounds in the TOML are specified per campaign. The model multiplies them by $i_{max}^{young}$ internally. Affects the `Pr` activation ceiling and all steps of young wine lines:
 
-$$task_{i_{max,Pr}} = \min\bigl(n_{press} \cdot i_{max}^{young},\ n_{max} - (K_{min} - 1)\bigr)$$
+$$task_{i_{max,Pr}} = \min\bigl(n_{young}^{press} \cdot i_{max}^{young} + n_{aged}^{press},\ n_{max} - (K_{min} - 1)\bigr)$$
 
-$$task_{i_{max,i}} = i_{max}^{young} \quad \forall i \in \text{steps of pressing lines} \setminus \{Pr\}$$
+$$task_{i_{max,i}} = i_{max}^{young} \quad \forall i \in \text{steps of young wine lines} \setminus \{Pr\}$$
+
+where $n_{young}^{press}$ is the number of pressing lines whose product has no aging stage and $n_{aged}^{press}$ is the remaining pressing lines (which run only once).
 
 ### Additional Variables
 
 - $Outsource_s \ge 0$: outsourced quantity of product $s$
-- $LatenessProd_s \ge 0$: delay of product $s$ beyond its effective deadline
+- $Late_{s,k} \ge 0$: delay of product $s$ beyond deadline $D_k$ for campaign $k \in \{1,\ldots,K\}$. Defined for all non-aging products at $k=1$ and for young wine products (no aging) at $k>1$.
 - $MS \ge 0$: makespan (retained from scheduling model)
 - $FinalProd_s \ge 0$: final internally produced quantity of product state $s$
 - $Discard_{s,n} \ge 0$: volume (L) discarded from intermediate state $s \in S^I$ at event $n$. Allows the consuming task's batch to be smaller than the upstream produced quantity when a fixed-capacity downstream vessel cannot accept the full volume.
@@ -596,13 +598,19 @@ $$ FinalProd_s \le \sum_{n \in N} b_{i^{Age}_s,\, n} \quad \forall s \in S^{Mark
 **Per-product lateness (`LateDefByProduct`):**
 Products with an aging stage are exempt from the lateness penalty entirely. Their delivery date is considered flexible because the aging duration is inherent to the product and not under the scheduler's control.
 
-For non-aging products, lateness is the amount by which the finish time of the last mandatory task $i^{last}_l$ exceeds the deadline:
+For non-aging products, each batch of the last mandatory task $i^{last}_l$ must be assigned to one of the $K$ campaigns, and lateness is measured against the corresponding campaign deadline $D_k$. Assignment is encoded via a nested GDP disjunction inside the active-task disjunct:
 
-$$LatenessProd_{s_l} = \max(0,\ Tf_{i^{last}_l} - Deadline)$$
+$$\forall l \notin I^{Age},\ n \in N:\quad W_{i^{last}_l,\,n} \implies \bigvee_{k=1}^{K_l} \bigl[Tf_{i^{last}_l,\,n} \le D_k + Late_{s_l,k}\bigr]$$
 
-Implemented as:
+where $K_l = i_{max}^{young}$ for young wine lines and $K_l = 1$ for all other non-aging lines. For $K_l = 1$ the disjunction collapses to a single Big-M inequality:
 
-$$ Tf_{i^{last}_l,\, n} \le Deadline + LatenessProd_{s_l} + M^{late}\,(1 - W_{i^{last}_l,\, n}) \quad \forall l \notin I^{Age},\, n \in N $$
+$$Tf_{i^{last}_l,\,n} \le D_1 + Late_{s_l,1} + M^{late}(1 - W_{i^{last}_l,\,n})$$
+
+**Campaign ordering.** To prevent two batches of the same young wine line from being assigned the same campaign label, the campaign index of each active event point is constrained to equal one plus the number of earlier unfixed active event points. For event $n$ with $S$ unfixed active predecessors $n' < n$, the single equality
+
+$$\sum_{k=2}^{K_l} (k-1)\,c_k = S$$
+
+(where $c_k$ is the binary indicator of the $k$-th campaign disjunct at event $n$) encodes the XOR constraint: given $c_1+\ldots+c_{K_l}=1$, the unique feasible solution is $c_{S+1}=1$. Campaign disjuncts with index $k > S+1$ are fixed inactive before the solve.
 
 ### Economic Objective
 
@@ -620,9 +628,11 @@ Outsourcing cost:
 
 $$ OutsourcingCost = \sum_{s\in S^{Market}} C^{out}_s \cdot Outsource_s $$
 
-Lateness cost (summed over non-aging products only):
+Lateness cost (summed over all campaigns and non-aging products):
 
-$$ LatenessCost = c^{late} \cdot \sum_{s \in S^{Market} \setminus S^{Age}} LatenessProd_s $$
+$$LatenessCost = c^{late} \cdot \sum_{k=1}^{K} \sum_{s \in S^{late}_k} Late_{s,k}$$
+
+where $S^{late}_1 = S^{Market} \setminus S^{Age}$ and $S^{late}_k = S^{young}$ for $k > 1$ (young wine products only, i.e. products whose line has no aging stage).
 
 Raw material cost:
 
