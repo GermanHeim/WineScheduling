@@ -1377,14 +1377,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
                 # Assign: y=1, batch limits, time sync
                 add_constr(d_assign, "y_on", model.y[i, j, n] == 1)
-                if pyo.value(model.Bmin[i, j]) == pyo.value(model.Bmax[i, j]):
+                bmin_val = float(pyo.value(model.Bmin[i, j]))
+                bmax_val = float(pyo.value(model.Bmax[i, j]))
+                if bmin_val == bmax_val:
                     # Fixed-capacity unit
-                    add_constr(
-                        d_assign, "bfixed", model.bj[i, j, n] == model.Bmin[i, j]
-                    )
+                    add_constr(d_assign, "bfixed", model.bj[i, j, n] == bmin_val)
                 else:
-                    add_constr(d_assign, "bmin", model.bj[i, j, n] >= model.Bmin[i, j])
-                    add_constr(d_assign, "bmax", model.bj[i, j, n] <= model.Bmax[i, j])
+                    add_constr(d_assign, "bmin", model.bj[i, j, n] >= bmin_val)
+                    add_constr(d_assign, "bmax", model.bj[i, j, n] <= bmax_val)
                 add_constr(d_assign, "sync_ts", model.Tsj[j, n] == model.Ts[i, n])
                 add_constr(d_assign, "sync_tf", model.Tfj[j, n] == model.Tf[i, n])
 
