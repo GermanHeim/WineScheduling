@@ -10,9 +10,10 @@
     # Number of event points
     n_max = 10
 
-    # Target Deadline for the schedule and lateness penalty
-    deadline = 1560 # 65 days
-    penaltyLate = 250 # Penalty for being late ($/hour delayed past deadline)
+    # Campaign deadlines (hours). One entry per young-wine campaign (iMaxYoungWine).
+    # The k-th element is the deadline for the k-th campaign.
+    deadlines = [1260, 8600, 12920]  # D1=52.5 d, D2=358 d, D3=538 d
+    penaltyLate = 5 # Penalty for being late ($/hour delayed past deadline)
 
     # Technical penalty weights for profit optimization (all in USD)
     penaltyMS = 0.05              # Penalty per hour of makespan
@@ -24,7 +25,7 @@
     iMax = 1
     # Max activations for young wine tasks.
     # Set to 2 to model two production cycles of young wines from the same line within a single schedule.
-    iMaxYoungWine = 2
+    iMaxYoungWine = 3
     jMax = 1
     jMin = 1
     iMaxST = 1
@@ -82,21 +83,21 @@
     [products.Rose1]
         name = "Estenas Rosado"
         category = "Rose"
-        demand = 10000  # 2x: two production cycles (iMaxYoungWine = 2)
+        demand = 5000 # per campaign
         price = 7.00
         costOutsourcing = 18.0
 
     [products.Rose2]
         name = "El rosado de Estenas"
         category = "Rose"
-        demand = 6000   # 2x: two production cycles (iMaxYoungWine = 2)
+        demand = 3000
         price = 11.00
         costOutsourcing = 21.0
 
     [products.White1]
         name = "Estenas blanco"
         category = "White"
-        demand = 10000  # 2x: two production cycles (iMaxYoungWine = 2)
+        demand = 5000 # per campaign
         price = 7.00
         costOutsourcing = 18.0
         outsourced = false
@@ -104,14 +105,14 @@
     [products.White2]
         name = "La tardana de estenas"
         category = "White"
-        demand = 6000   # 2x: two production cycles (iMaxYoungWine = 2)
+        demand = 3000
         price = 11.00
         costOutsourcing = 28.0
 
     [products.White3]
         name = "Viña lidón"
         category = "White"
-        demand = 16000  # 2x: two production cycles (iMaxYoungWine = 2)
+        demand = 8000
         price = 16.00
         costOutsourcing = 29.5
         outsourced = false
@@ -142,11 +143,11 @@
     Red3 = 7500
     Red4 = 9000
     Red5 = 7000
-    Rose1 = 20000   # 2x: two production cycles (iMaxYoungWine = 2)
-    Rose2 = 14000   # 2x
-    White1 = 20000  # 2x
-    White2 = 14000  # 2x
-    White3 = 24000  # 2x
+    Rose1 = 10000 # per campaign
+    Rose2 = 7000
+    White1 = 10000 # per campaign
+    White2 = 7000
+    White3 = 12000
 
 # 5. Product Lines
 #

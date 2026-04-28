@@ -479,7 +479,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 model.rhoIScons[task, pre_ag] = 0.0
                 model.rhoIScons[task, f"vbuf{line}"] = -1.0
 
-    demand_data = {k: v["demand"] for k, v in params["products"].items()}
+    imax_young_pre = int(global_cfg.get("iMaxYoungWine", 1))
+    aging_prods_pre = set(aging_task_by_product.keys())
+    demand_data = {
+        k: v["demand"] * (imax_young_pre if k not in aging_prods_pre else 1)
+        for k, v in params["products"].items()
+    }
     model.D = pyo.Param(model.s, initialize=demand_data, default=0)
     model.line_product = line_product
     model.line_last_task = line_last_task
@@ -499,9 +504,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.CostOutsourcing = pyo.Param(model.s, initialize=outsourcing_data, default=0.0)
     model.OutsourceAllowed = pyo.Param(
         model.s, initialize=outsourcing_allowed_data, default=1
-    )
-    model.Deadline = pyo.Param(
-        initialize=global_cfg.get("deadline", pyo.value(model.H))
     )
     model.penaltyLate = pyo.Param(initialize=global_cfg.get("penaltyLate", 0.0))
 
@@ -532,6 +534,27 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.penaltyDiscard = pyo.Param(initialize=global_cfg.get("penaltyDiscard", 3.0))
     model.GrapeSkinValue = pyo.Param(initialize=global_cfg.get("grape_skin_value", 0.0))
     imax_young = int(global_cfg.get("iMaxYoungWine", 1))
+
+    # Deadline list
+    if "deadlines" not in global_cfg:
+        raise ValueError("Missing required [global].deadlines list in TOML")
+    deadlines_val = [float(d) for d in global_cfg["deadlines"]]
+    if len(deadlines_val) < imax_young:
+        raise ValueError(
+            f"[global].deadlines must contain at least {imax_young} values, "
+            f"got {len(deadlines_val)}"
+        )
+    model.DeadlineK = pyo.Param(
+        range(1, imax_young + 1),
+        initialize={k + 1: deadlines_val[k] for k in range(imax_young)},
+    )
+
+    # Young wines
+    aging_products_early = set(aging_task_by_product.keys())
+    young_lines = [ln for ln in lines if line_product[ln] not in aging_products_early]
+    dual_late_lines_set = set(young_lines) if imax_young > 1 else set()
+    dual_late_products = sorted({line_product[ln] for ln in dual_late_lines_set})
+    dual_late_products_set = set(dual_late_products)
 
     # Sparse Index Sets
     n_max = max(model.n)
@@ -650,7 +673,19 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.FinalProd = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.Outsource = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
-    model.LatenessProd = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
+    all_late_products = sorted(
+        {
+            line_product[ln]
+            for ln in lines
+            if line_product[ln] not in aging_products_early
+        }
+    )
+    late_camp_index = [
+        (s, k)
+        for k in range(1, imax_young + 1)
+        for s in (all_late_products if k == 1 else dual_late_products)
+    ]
+    model.Late = pyo.Var(late_camp_index, domain=pyo.NonNegativeReals)
     model.Discard = pyo.Var(model.SI, model.n, domain=pyo.NonNegativeReals)
     for s in model.SI:
         discard_ub = max(
@@ -673,25 +708,26 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.task_imax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.iMax)
     pressing_lines_pr = [ln for ln in lines if "Pr" in lines_cfg[ln]["steps"]]
     if "Pr" in model.i and pressing_lines_pr:
-        n_pressing = len(pressing_lines_pr)
+        n_young_pressing = sum(1 for ln in pressing_lines_pr if ln in set(young_lines))
+        n_aged_pressing = len(pressing_lines_pr) - n_young_pressing
         min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_pr)
         n_valid_pr = n_max - (min_K_pr - 1)
-        # Scale Pr activations by imax_young: up to imax_young runs per pressing line,
-        # capped by available event slots (n_valid_pr).
-        model.task_imax["Pr"] = min(n_pressing * imax_young, n_valid_pr)
+        model.task_imax["Pr"] = min(
+            n_young_pressing * imax_young + n_aged_pressing, n_valid_pr
+        )
 
     if imax_young > 1:
-        young_tasks = [
+        young_task_names = [
             f"{step}{ln}"
-            for ln in pressing_lines_pr
+            for ln in young_lines
             for step in lines_cfg[ln]["steps"]
             if step != "Pr"
         ]
-        for t in young_tasks:
+        for t in young_task_names:
             if t in model.i:
                 model.task_imax[t] = imax_young
         print(
-            f"  [iMaxYoungWine={imax_young}] Applied to {len(young_tasks)} pressed-wine tasks."
+            f"  [iMaxYoungWine={imax_young}] Applied to {len(young_task_names)} young-wine tasks (no aging)."
         )
     for task in model.i:
         stage = task_stage(task)
@@ -707,7 +743,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         if s in sr_set:
             ub = float(pyo.value(model.ST0[s]))
         elif s in smarket_set_local:
-            ub = float(product_ub_cfg.get(s, pyo.value(model.H)))
+            scale = imax_young if s not in aging_products_early else 1
+            ub = float(product_ub_cfg.get(s, pyo.value(model.H))) * scale
         else:
             producers = [i for i in model.i if (i, s) in model.IPS]
             if producers:
@@ -744,12 +781,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     FinalProd_bounds = params["product_ub"]
     for sp in model.SP:
         if sp in FinalProd_bounds:
-            model.FinalProd[sp].setub(FinalProd_bounds[sp])
+            scale = imax_young if sp not in aging_products_early else 1
+            model.FinalProd[sp].setub(FinalProd_bounds[sp] * scale)
 
-    late_ub = pyo.value(model.H) - pyo.value(model.Deadline)
+    H_val = pyo.value(model.H)
     for s in model.SMarket:
-        model.LatenessProd[s].setub(late_ub)
         model.Outsource[s].setub(pyo.value(model.D[s]))
+    for k in range(1, imax_young + 1):
+        dk_val = deadlines_val[k - 1]
+        prod_set = all_late_products if k == 1 else dual_late_products
+        for s in prod_set:
+            model.Late[s, k].setub(max(0.0, H_val - dk_val))
     # Per-task time window bounds derived from minimum cumulative step durations.
     # earliest_start[k] = sum of alpha for all steps before k (can't start earlier).
     # latest_finish[k] = H - sum of alpha for all steps after k (must leave room).
@@ -1218,20 +1260,83 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # Products with an aging stage are not subject to the lateness penalty
     aging_products = set(aging_task_by_product.keys())
 
+    # Ordering equality for N-way campaign disjuncts.
+    # Single constraint: sum_{k=2}^{N} (k-1)*c_k = S (S = active prior event count)
+    # encodes "campaign number = 1 + prior active events" for any N.
+    model.CampOrderEq = pyo.ConstraintList()
+
     model.LateDefByProduct = pyo.ConstraintList()
     for line in lines:
         product = line_product[line]
         if product in aging_products:
             continue
         i_last = line_lateness_task[line]
-        M_late = task_LF[i_last] - pyo.value(model.Deadline)
-        for n in model.n:
-            model.LateDefByProduct.add(
-                model.Tf[i_last, n]
-                <= model.Deadline
-                + model.LatenessProd[product]
-                + M_late * (1 - active_disjuncts[i_last, n].binary_indicator_var)
-            )
+        n_camps = imax_young if product in dual_late_products_set else 1
+
+        ns_all = list(model.n)
+        for k_idx, n in enumerate(ns_all):
+            w_n = active_disjuncts[i_last, n].binary_indicator_var
+            if w_n.is_fixed() and pyo.value(w_n) == 0:
+                continue
+
+            d_active = active_disjuncts[i_last, n]
+
+            if n_camps == 1:
+                # Single deadline: Big-M constraint
+                M_late = task_LF[i_last] - deadlines_val[0]
+                model.LateDefByProduct.add(
+                    model.Tf[i_last, n]
+                    <= deadlines_val[0] + model.Late[product, 1] + M_late * (1 - w_n)
+                )
+            else:
+                # N-way GDP disjunction nested inside the active disjunct.
+                # Each branch assigns the finish time to the deadline of campaign k.
+                camp_disjuncts_list = []
+                for camp_k in range(1, n_camps + 1):
+                    dk = gdp.Disjunct()
+                    dk.add_component(
+                        "late_def",
+                        pyo.Constraint(
+                            expr=model.Tf[i_last, n]
+                            <= model.DeadlineK[camp_k] + model.Late[product, camp_k]
+                        ),
+                    )
+                    d_active.add_component(f"d_camp{camp_k}_late", dk)
+                    camp_disjuncts_list.append(dk)
+                d_active.add_component(
+                    "Disj_campaign_late",
+                    gdp.Disjunction(expr=camp_disjuncts_list),
+                )
+
+                active_prior = [
+                    np
+                    for np in ns_all[:k_idx]
+                    if not (
+                        active_disjuncts[i_last, np].binary_indicator_var.is_fixed()
+                        and pyo.value(active_disjuncts[i_last, np].binary_indicator_var)
+                        == 0
+                    )
+                ]
+                # Fix campaigns that are impossible (not enough prior events).
+                max_camp = min(len(active_prior) + 1, n_camps)
+                for dk in camp_disjuncts_list[max_camp:]:
+                    dk.binary_indicator_var.fix(0)
+
+                if active_prior:
+                    # Ordering equality: sum_{k=2}^{max_camp} (k-1)*c_k = S
+                    # Exactly encodes "campaign = 1 + number of active prior events".
+                    S = sum(
+                        active_disjuncts[i_last, np].binary_indicator_var
+                        for np in active_prior
+                    )
+                    model.CampOrderEq.add(
+                        sum(
+                            (camp_k - 1)
+                            * camp_disjuncts_list[camp_k - 1].binary_indicator_var
+                            for camp_k in range(2, max_camp + 1)
+                        )
+                        == S
+                    )
 
     # ========================================
     # DISJUNCTIONS (Combined Task-Unit, Eq. 2.1)
@@ -1472,12 +1577,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.OutsourcingCost = pyo.Expression(
         expr=sum(model.CostOutsourcing[s] * model.Outsource[s] for s in model.SMarket)
     )
-    late_products = [s for s in model.SMarket if s not in aging_task_by_product]  # type: ignore[union-attr]
-    model.Lateness = pyo.Expression(
-        expr=sum(model.LatenessProd[s] for s in late_products)
-    )
+    lateness_terms = [
+        model.Late[s, k]
+        for k in range(1, imax_young + 1)
+        for s in (all_late_products if k == 1 else dual_late_products)
+    ]
+    model.Lateness = pyo.Expression(expr=sum(lateness_terms) if lateness_terms else 0.0)
     model.LatenessCost = pyo.Expression(
-        expr=model.penaltyLate * sum(model.LatenessProd[s] for s in late_products)  # type: ignore[operator]
+        expr=model.penaltyLate * sum(lateness_terms) if lateness_terms else 0.0
     )
     model.RawMaterialCost = pyo.Expression(
         expr=sum(
