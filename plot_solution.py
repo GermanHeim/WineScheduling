@@ -14,6 +14,7 @@ Produces two figures:
 """
 
 import argparse
+import math
 import re
 import sys
 import tomllib
@@ -391,18 +392,19 @@ def is_economic_context(results_path: Path, model_name: str) -> bool:
     return "economic" in model_l or "economic" in file_l
 
 
-def read_deadline_hours(toml_path: Path) -> float | None:
+def read_deadlines(toml_path: Path) -> list[float]:
+    """Return a list of deadline values (hours) for all campaigns, or [] if unavailable."""
     if not toml_path.exists():
-        return None
+        return []
     with open(toml_path, "rb") as f:
         params = tomllib.load(f)
-    deadline = params.get("global", {}).get("deadline")
-    if deadline is None:
-        return None
-    try:
-        return float(deadline)
-    except (TypeError, ValueError):
-        return None
+    global_cfg = params.get("global", {})
+
+    if "deadlines" in global_cfg:
+        try:
+            return [float(d) for d in global_cfg["deadlines"]]
+        except (TypeError, ValueError):
+            return []
 
 
 def task_stage(task_name: str) -> str:
@@ -471,9 +473,9 @@ def format_unit_label(
     if m:
         family_raw = m.group(1).lower()
         family = {
-            "inox": "Inox",
-            "subte": "Subterranean",
-            "iso": "Isothermal",
+            "inox": "Inox.",
+            "subte": "Subte.",
+            "iso": "Iso.",
         }.get(family_raw, family_raw.capitalize())
         capacity = m.group(2)
         is_variable = bool(m.group(3))
@@ -483,7 +485,7 @@ def format_unit_label(
 
     m = re.match(r"^subte_(\d+)$", unit_name, re.IGNORECASE)
     if m:
-        return f"Subterranean {m.group(1)}"
+        return f"Subte. {m.group(1)}"
 
     m = re.match(r"^(barrique|jar)\s*\[(\d+)\]$", unit_name, re.IGNORECASE)
     if m:
@@ -1021,10 +1023,13 @@ def _add_break_marks(ax_left: plt.Axes, ax_right: plt.Axes) -> None:
     ax_right.plot([0, 0], [0, 1], transform=ax_right.transAxes, **kw)  # type: ignore[arg-type]
 
 
+DEADLINE_COLORS = ["#B03A2E", "#2471A3", "#1E8449", "#7D3C98", "#D68910", "#0E6655"]
+
+
 def plot_solution(
     data: dict,
     ax: plt.Axes,
-    deadline_hours: float | None = None,
+    deadlines: list[float] | None = None,
     publish_mode: bool = False,
     no_title: bool = False,
     no_break: bool = False,
@@ -1092,7 +1097,9 @@ def plot_solution(
             prev = b_end
         segments.append((prev, xmax))
 
-        widths = [1] * len(segments)
+        widths = [
+            max(math.sqrt(seg_end - seg_start), 1.0) for seg_start, seg_end in segments
+        ]
         gss = GridSpecFromSubplotSpec(
             1,
             len(segments),
@@ -1171,7 +1178,10 @@ def plot_solution(
             _age_months_m = re.search(r"Age(?:Bar|Jar)(\d+)M", t["task"])
             is_long_aging = bool(_age_months_m) and int(_age_months_m.group(1)) > 5
             hatch = "////" if is_long_aging else None
-            edge_color = "#5C3D1E" if is_long_aging else "white"
+            edge_color = "#4B2E1E" if is_long_aging else "#52514e"
+            bar_gap = min(6.0, max(1.0, (clip_end - clip_start) * 0.03))
+            draw_left = clip_start + bar_gap / 2.0
+            draw_width = max(clip_end - clip_start - bar_gap, 0.5)
 
             drawn_display_units: set[str] = set()
             for u in t["units"]:
@@ -1183,12 +1193,12 @@ def plot_solution(
 
                 seg_ax.barh(
                     yi,
-                    clip_end - clip_start,
-                    left=clip_start,
+                    draw_width,
+                    left=draw_left,
                     height=bar_height,
                     color=color,
                     edgecolor=edge_color,
-                    linewidth=0.6,
+                    linewidth=0.9,
                     align="center",
                     hatch=hatch,
                 )
@@ -1197,13 +1207,13 @@ def plot_solution(
                 label_key = (t["task"], t["event"], display_unit)
                 if best_seg.get(label_key) == seg_idx:
                     bar_w_px, bar_h_px = bar_size_px(
-                        seg_ax, clip_start, clip_end, yi, bar_height
+                        seg_ax, draw_left, draw_left + draw_width, yi, bar_height
                     )
-                    clipped_width = clip_end - clip_start
+                    clipped_width = draw_width
 
                     label_x = t["start"] + duration / 2
                     if not (seg_start <= label_x <= seg_end):
-                        label_x = (clip_start + clip_end) / 2
+                        label_x = draw_left + draw_width / 2
                     display_task = format_task_label(t["task"], publish_mode)
                     batch_str = (
                         f"{t['batch']:.0f} L"
@@ -1362,12 +1372,13 @@ def plot_solution(
             )
             ann_t.set_in_layout(False)
 
-    if deadline_hours is not None and deadline_hours >= 0:
+    for dl_idx, dl_hours in enumerate(deadlines or []):
+        dl_color = DEADLINE_COLORS[dl_idx % len(DEADLINE_COLORS)]
         for seg_ax, (seg_start, seg_end) in zip(axes, segments):
-            if seg_start <= deadline_hours <= seg_end:
+            if seg_start <= dl_hours <= seg_end:
                 seg_ax.axvline(
-                    deadline_hours,
-                    color="#B03A2E",
+                    dl_hours,
+                    color=dl_color,
                     linestyle="--",
                     linewidth=1.4,
                     alpha=0.9,
@@ -1393,15 +1404,22 @@ def plot_solution(
         for code, name, color in legend_defs
         if any(t["task"].startswith(code) for t in tasks)
     ]
-    if deadline_hours is not None and deadline_hours >= 0:
+    for dl_idx, dl_hours in enumerate(deadlines or []):
+        dl_color = DEADLINE_COLORS[dl_idx % len(DEADLINE_COLORS)]
+        _dl_name = f"Deadline {dl_idx + 1}"
+        _dl_label = (
+            f"{_dl_name} ({dl_hours / 24:.0f} d)"
+            if is_economic
+            else f"{_dl_name} ({dl_hours:.0f} h)"
+        )
         legend_handles.append(
             Line2D(
                 [0],
                 [0],
-                color="#B03A2E",
+                color=dl_color,
                 linestyle="--",
                 linewidth=1.4,
-                label=f"Deadline ({deadline_hours:.0f} h)",
+                label=_dl_label,
             )
         )
     axes[-1].legend(
@@ -1863,11 +1881,11 @@ def main():
     else:
         print(f"  TOML     : {toml_path}")
 
-    deadline_hours = None
+    deadlines: list[float] = []
     if is_economic_context(filepath, model_name):
-        deadline_hours = read_deadline_hours(toml_path)
-        if deadline_hours is not None:
-            print(f"  Deadline : {deadline_hours} h")
+        deadlines = read_deadlines(toml_path)
+        for _i, _dh in enumerate(deadlines):
+            print(f"  Deadline{_i + 1}: {_dh} h ({_dh / 24:.1f} d)")
 
     has_production = bool(data.get("production"))
 
@@ -1926,7 +1944,7 @@ def main():
     plot_solution(
         data,
         ax_gantt,
-        deadline_hours=deadline_hours,
+        deadlines=deadlines,
         publish_mode=args.publish,
         no_title=args.no_title,
         no_break=args.no_break,
