@@ -1122,14 +1122,20 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             task_name = f"{step}{line}"
             if task_name not in model.i:
                 continue
-            max_bmax = max(
-                (
-                    pyo.value(model.Bmax[task_name, j])
-                    for j in model.j
-                    if (task_name, j) in model.ij
-                ),
-                default=0.0,
-            )
+            if task_name in pool_tasks:
+                if task_name in barr_tasks:
+                    max_bmax = n_barr * barr_cap
+                else:
+                    max_bmax = n_jar * jar_cap
+            else:
+                max_bmax = max(
+                    (
+                        pyo.value(model.Bmax[task_name, j])
+                        for j in model.j
+                        if (task_name, j) in model.ij
+                    ),
+                    default=0.0,
+                )
             if max_bmax <= 0:
                 continue
             rhs = math.ceil(demand / max_bmax)
