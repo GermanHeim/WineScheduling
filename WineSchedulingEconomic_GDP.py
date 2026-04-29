@@ -712,8 +712,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         n_aged_pressing = len(pressing_lines_pr) - n_young_pressing
         min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_pr)
         n_valid_pr = n_max - (min_K_pr - 1)
+        iMax_val = int(pyo.value(model.iMax))
         model.task_imax["Pr"] = min(
-            n_young_pressing * imax_young + n_aged_pressing, n_valid_pr
+            n_young_pressing * imax_young + n_aged_pressing * iMax_val, n_valid_pr
         )
 
     if imax_young > 1:
