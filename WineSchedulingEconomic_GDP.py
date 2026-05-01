@@ -841,7 +841,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         )
         for line, cfg in lines_cfg.items()
     )
-    model.ms_lb = pyo.Constraint(expr=model.MS >= min_makespan)
+    model.MS.setlb(min_makespan)
 
     FinalProd_bounds = params["product_ub"]
     for sp in model.SP:
