@@ -159,6 +159,30 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         )
     }
 
+    # Two-path aging for alm_int_lines: direct ({AgeStep}{line}) already in tasks,
+    # and Alm-variant ({AgeStep}Alm{line}) that consumes vbuf instead of vl/v.
+    # alm_variant_base maps Alm-variant task name -> base aging stage for template lookup.
+    alm_variant_base: dict[str, str] = {}
+    for ln in alm_int_lines:
+        for step in lines_cfg[ln]["steps"]:
+            if is_aging_stage(step):
+                alm_task = f"{step}Alm{ln}"
+                tasks.append(alm_task)
+                alm_variant_base[alm_task] = step
+                break
+
+    def get_stage(task_name):
+        """Return the template stage for a task, resolving Alm-variant aliases."""
+        return alm_variant_base.get(task_name, task_stage(task_name))
+
+    # aging_tasks_by_product: product -> list of all aging tasks (direct + Alm-variant)
+    aging_tasks_by_product: dict[str, list[str]] = {
+        prod: [task] for prod, task in aging_task_by_product.items()
+    }
+    for alm_t, base_stage in alm_variant_base.items():
+        prod = line_product[task_line(alm_t)]
+        aging_tasks_by_product[prod].append(alm_t)
+
     model.i = pyo.Set(initialize=tasks)
     model.iAlmInt = pyo.Set(initialize=[f"Alm{ln}" for ln in alm_int_lines])
     model.inst = pyo.Set(initialize=tasks)
@@ -203,7 +227,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # Task-unit pairs (ij)
     ij_data = []
     for task in tasks:
-        prefix = task_stage(task)
+        prefix = get_stage(task)
 
         if (
             prefix in params["templates"]
@@ -348,9 +372,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 IPS_data.append((task, f"vbuf{line}"))
         elif is_aging_stage(stage):
             if line in aging_before_cs_lines:
-                # Aging before Cs: consume buffer state if Alm exists, else fermentation intermediate
-                if line in alm_int_lines:
+                # Two-path aging for alm_int_lines:
+                #   Alm-variant task -> consume vbuf (held by Alm intermediate step)
+                #   Direct aging task -> consume pre_ag (vl or v, same as non-alm lines)
+                if task in alm_variant_base:
                     ICS_data.append((task, f"vbuf{line}"))
+                elif line in alm_int_lines:
+                    pre_ag = f"v{line}" if line in no_fl_lines else f"vl{line}"
+                    ICS_data.append((task, pre_ag))
                 elif line in no_fl_lines:
                     ICS_data.append((task, f"v{line}"))
                 else:
@@ -377,6 +406,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.SZW = pyo.Set(
         initialize=[f"v{ln}" for ln in lines]
         + (["m"] if any("Pr" in lines_cfg[ln]["steps"] for ln in lines) else [])
+        + [f"vbuf{ln}" for ln in alm_int_lines]
     )
     model.SNIS = pyo.Set(
         initialize=[f"vl{ln}" for ln in lines if ln not in no_fl_lines]
@@ -389,12 +419,21 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         for idx in range(len(steps) - 1):
             current_task = f"{steps[idx]}{line}"
             next_task = f"{steps[idx + 1]}{line}"
-            if steps[idx] == "Alm" and line in alm_int_lines:
+            if steps[idx + 1] == "Alm" and line in alm_int_lines:
+                pass
+            elif steps[idx] == "Alm" and line in alm_int_lines:
+                pass
+            elif is_aging_stage(steps[idx]) and line in alm_int_lines:
                 pass
             elif steps[idx] == "Pr" and steps[idx + 1] == "Fa":
                 pass
             else:
                 tc1_data.append((current_task, next_task))
+    # Alm -> AgeViaAlm: if Alm runs at event n, AgeViaAlm must run at event n+1.
+    # vbuf is ZW so timing is tight, and tc1 enforces the binary coupling.
+    for alm_t in alm_variant_base:
+        ln = task_line(alm_t)
+        tc1_data.append((f"Alm{ln}", alm_t))
     model.tc1 = pyo.Set(initialize=tc1_data, dimen=2)
     model.prd = pyo.Set(initialize=[line_product[ln] for ln in lines])
 
@@ -413,7 +452,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.Bmax = pyo.Param(model.ij, mutable=True, default=0)
 
     for task in model.i:
-        prefix = task_stage(task)
+        prefix = get_stage(task)
 
         if prefix in params["templates"]:
             template = params["templates"][prefix]
@@ -468,16 +507,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         model.rhoIScons[task, pre_ag] = -1.0
         model.rhoISprod[task, f"vbuf{line}"] = 1.0
 
-    # Override aging task rho for alm_int_lines: consume vbuf (not the pre-aging state)
-    # TODO: We still need to update this
-    for line in alm_int_lines:
-        pre_ag = f"v{line}" if line in no_fl_lines else f"vl{line}"
-        steps = lines_cfg[line]["steps"]
-        for stage in steps:
-            if is_aging_stage(stage):
-                task = f"{stage}{line}"
-                model.rhoIScons[task, pre_ag] = 0.0
-                model.rhoIScons[task, f"vbuf{line}"] = -1.0
+    # Alm-variant aging rho: consume vbuf (not pre_ag), same yield as direct aging task.
+    for alm_t, base_stage in alm_variant_base.items():
+        ln = task_line(alm_t)
+        direct_task = f"{base_stage}{ln}"
+        pre_ag = f"v{ln}" if ln in no_fl_lines else f"vl{ln}"
+        model.rhoIScons[alm_t, pre_ag] = 0.0  # no pre_ag consumption
+        model.rhoIScons[alm_t, f"vbuf{ln}"] = -1.0  # consume vbuf instead
+        va_state = f"va{ln}"
+        model.rhoISprod[alm_t, va_state] = pyo.value(
+            model.rhoISprod[direct_task, va_state]
+        )
 
     imax_young_pre = int(global_cfg.get("iMaxYoungWine", 1))
     aging_prods_pre = set(aging_task_by_product.keys())
@@ -532,6 +572,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.penaltyMS = pyo.Param(initialize=params["global"].get("penaltyMS", 0.0))
     model.costCooling = pyo.Param(initialize=params["global"].get("costCooling", 0.0))
     model.penaltyDiscard = pyo.Param(initialize=global_cfg.get("penaltyDiscard", 3.0))
+    model.almHoldingCost = pyo.Param(initialize=global_cfg.get("almHoldingCost", 0.05))
     model.GrapeSkinValue = pyo.Param(initialize=global_cfg.get("grape_skin_value", 0.0))
     imax_young = int(global_cfg.get("iMaxYoungWine", 1))
 
@@ -628,7 +669,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         elif i in jar_tasks:
             b_ub_i = jar_cap * n_jar
         else:
-            stage_i = task_stage(i)
+            stage_i = get_stage(i)
             template_i = params.get("templates", {}).get(stage_i, {})
             jmax_i = int(template_i.get("max_units", pyo.value(model.jMax)))
             bmax_vals_i = sorted(
@@ -703,6 +744,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for n in model.n:
                 model.Discard[s, n].setub(discard_ub)
 
+    # vbuf Discard left free: ZW forces AgeViaAlm to run immediately after Alm (no gap),
+    # and tc1 forces W[AgeViaAlm,n+1]=W[Alm,n] (no total abandon).
     model.task_jmax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMax)
     model.task_jmin = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMin)
     model.task_imax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.iMax)
@@ -731,12 +774,33 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             f"  [iMaxYoungWine={imax_young}] Applied to {len(young_task_names)} young-wine tasks (no aging)."
         )
     for task in model.i:
-        stage = task_stage(task)
+        stage = get_stage(task)
         template = params.get("templates", {}).get(stage, {})
         if "max_units" in template:
             model.task_jmax[task] = int(template["max_units"])
         if "min_units" in template:
             model.task_jmin[task] = int(template["min_units"])
+
+    # Cs must handle output from both aging paths (direct + via Alm).
+    # task_imax[Cs] = task_imax[AgeDirect] + task_imax[AgeViaAlm] so Cs can follow
+    # every aging activation regardless of iMax setting.
+    for ln in alm_int_lines:
+        cs_task = f"Cs{ln}"
+        if cs_task not in model.i:
+            continue
+        aging_step = next(
+            (s for s in lines_cfg[ln]["steps"] if is_aging_stage(s)), None
+        )
+        if not aging_step:
+            continue
+        direct_imax = pyo.value(model.task_imax[f"{aging_step}{ln}"])
+        alm_variant = f"{aging_step}Alm{ln}"
+        alm_imax = (
+            pyo.value(model.task_imax[alm_variant])
+            if alm_variant in set(model.i)
+            else 0
+        )
+        model.task_imax[cs_task] = int(direct_imax) + int(alm_imax)
 
     sr_set = set(model.SR)
     smarket_set_local = set(model.SMarket)
@@ -835,6 +899,21 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 model.Tf["Pr", n].setub(pr_lf)
                 model.Ts["Pr", n].setub(pr_lf)
 
+    # Alm-variant aging tasks inherit ES/LF from the direct aging task (same window)
+    for alm_t, base_stage in alm_variant_base.items():
+        ln = task_line(alm_t)
+        direct_task = f"{base_stage}{ln}"
+        es_alm = task_ES.get(direct_task, 0.0)
+        lf_alm = task_LF.get(direct_task, H_val)
+        task_ES[alm_t] = es_alm
+        task_LF[alm_t] = lf_alm
+        for n in model.n:
+            if es_alm > 0:
+                model.Ts[alm_t, n].setlb(es_alm)
+            if lf_alm < H_val:
+                model.Tf[alm_t, n].setub(lf_alm)
+                model.Ts[alm_t, n].setub(lf_alm)
+
     # ========================================
     # DISJUNCT PRE-CREATION
     # ========================================
@@ -871,6 +950,11 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             if step == "Pr":
                 continue
             task_pos_len[f"{step}{line}"] = (k, K)
+
+    # Alm-variant aging tasks share the same position/event window as the direct aging task
+    for alm_t, base_stage in alm_variant_base.items():
+        ln = task_line(alm_t)
+        task_pos_len[alm_t] = task_pos_len[f"{base_stage}{ln}"]
 
     n_fixed = 0
     task_valid_event_count: dict[str, int] = {}
@@ -1016,6 +1100,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         )
         return model.ST[s, n_max] + produced - model.Discard[s, n_max] == 0
 
+    # h16 covers vbuf ZW states: forces Alm output at n_max to be discarded
+    # (AgeViaAlm can't run at n_max+1; h16 is the terminal cleanup for all SZW).
     model.h16 = pyo.Constraint(model.SZW, rule=h16_rule)
 
     model.g17 = pyo.Constraint(
@@ -1229,7 +1315,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     )
 
     # Ecobulk Alm max duration: 720 h (1 month). Big-M relaxed when y[i,j,n]=0.
-    # TODO: Update Alm
     all_alm = list(model.iAlmInt)
     eco_alm_index = [
         (i, j, n)
@@ -1254,11 +1339,11 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     )
 
     # If a product has a required aging stage, all in-house final production of that
-    # product must go through that aging task.
+    # product must go through an aging task (direct or Alm-variant).
     model.A18_aging_link = pyo.Constraint(
-        [p for p in model.SMarket if p in model.aging_task_by_product],
+        [p for p in model.SMarket if p in aging_tasks_by_product],
         rule=lambda m, p: m.FinalProd[p]
-        <= sum(m.b[m.aging_task_by_product[p], n] for n in m.n),
+        <= sum(m.b[t, n] for t in aging_tasks_by_product[p] for n in m.n),
     )
     model.A21 = pyo.Constraint(
         model.ipst, [n_max], rule=lambda m, i, n: m.Tf[i, n] <= m.MS
@@ -1266,11 +1351,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     # Products with an aging stage are not subject to the lateness penalty
     aging_products = set(aging_task_by_product.keys())
-
-    # Ordering equality for N-way campaign disjuncts.
-    # Single constraint: sum_{k=2}^{N} (k-1)*c_k = S (S = active prior event count)
-    # encodes "campaign number = 1 + prior active events" for any N.
-    model.CampOrderEq = pyo.ConstraintList()
 
     model.LateDefByProduct = pyo.ConstraintList()
     for line in lines:
@@ -1336,13 +1416,16 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                         active_disjuncts[i_last, np].binary_indicator_var
                         for np in active_prior
                     )
-                    model.CampOrderEq.add(
-                        sum(
-                            (camp_k - 1)
-                            * camp_disjuncts_list[camp_k - 1].binary_indicator_var
-                            for camp_k in range(2, max_camp + 1)
-                        )
-                        == S
+                    d_active.add_component(
+                        "CampOrderEq",
+                        pyo.Constraint(
+                            expr=sum(
+                                (camp_k - 1)
+                                * camp_disjuncts_list[camp_k - 1].binary_indicator_var
+                                for camp_k in range(2, max_camp + 1)
+                            )
+                            == S
+                        ),
                     )
 
     # ========================================
@@ -1367,12 +1450,21 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             # Retrieve pre-created disjuncts, binary_indicator_var IS W_{i,n}
             d_active = active_disjuncts[i, n]
 
-            add_constr(
-                d_active,
-                "duration",
-                model.Tf[i, n]
-                == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
-            )
+            if i in model.iAlmInt:
+                # Variable duration for storage (Alm)
+                # solver chooses Tf freely, minimum = Ts + alpha
+                add_constr(
+                    d_active,
+                    "duration",
+                    model.Tf[i, n] >= model.Ts[i, n] + model.alpha[i],
+                )
+            else:
+                add_constr(
+                    d_active,
+                    "duration",
+                    model.Tf[i, n]
+                    == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
+                )
 
             # Nested unit selection: ⋁_{j in J_i}, skipped for pool tasks
             for j in compatible_units:
@@ -1570,12 +1662,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     )
 
     # ========================================
-    # STORAGE PERSISTENCE (Logical Implications, Eq. 2.3)
-    # ========================================
-
-    # TODO: Update storage and storage persistance
-
-    # ========================================
     # OBJECTIVE FUNCTION
     # ========================================
     model.Revenue = pyo.Expression(
@@ -1662,6 +1748,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         * sum(model.Discard[s, n] for s in model.SI for n in model.n)
     )
 
+    alm_task_names = [f"Alm{ln}" for ln in alm_int_lines if f"Alm{ln}" in set(model.i)]
+    model.AlmHoldingCost = pyo.Expression(
+        expr=model.almHoldingCost
+        * sum(model.b[t, n] for t in alm_task_names for n in model.n)
+        if alm_task_names
+        else 0.0
+    )
+
     model.MakespanPenalty = pyo.Expression(expr=model.penaltyMS * model.MS)
     # epsilon-trick: tiny penalty pulling all task start times as early as possible.
     # Breaks the degeneracy of "floating" tasks that can shift freely without
@@ -1688,6 +1782,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             - model.MakespanPenalty
             - model.CoolingCost
             - model.DiscardCost
+            - model.AlmHoldingCost
             - model.TimePullPenalty
         )
 

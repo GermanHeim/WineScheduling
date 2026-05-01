@@ -20,6 +20,7 @@
     costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
     grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
     penaltyDiscard = 5.0          # Cost per liter discarded (approx. raw material + basic processing cost)
+    almHoldingCost = 1e-3         # Cost per liter of wine stored
 
     # Activation/unit assignment limits
     iMax = 1
@@ -170,19 +171,19 @@ steps = ["Fa", "Fl", "AgeBar4M", "Cs"]
 
 [lines.2]
 product = "Red2"
-steps = ["Fa", "Fl", "AgeBar9M", "Cs"]
+steps = ["Fa", "Fl", "Alm", "AgeBar9M", "Cs"]
 
 [lines.3]
 product = "Red3"
-steps = ["Fa", "Fl", "AgeBar11M", "Cs"]
+steps = ["Fa", "Fl", "Alm", "AgeBar11M", "Cs"]
 
 [lines.4]
 product = "Red4"
-steps = ["Fa", "Fl", "AgeBar15M", "Cs"]
+steps = ["Fa", "Fl", "Alm", "AgeBar15M", "Cs"]
 
 [lines.5]
 product = "Red5"
-steps = ["Fa", "Fl", "AgeJar4M", "Cs"]
+steps = ["Fa", "Fl", "Alm", "AgeJar4M", "Cs"]
 
 [lines.6]
 product = "Rose1"
@@ -190,7 +191,7 @@ steps = ["Pr", "Fa", "Cs"]
 
 [lines.7]
 product = "Rose2"
-steps = ["Pr", "Fa", "AgeJar1M", "Cs"]
+steps = ["Pr", "Fa", "Alm", "AgeJar1M", "Cs"]
 
 [lines.8]
 product = "White1"
@@ -198,11 +199,11 @@ steps = ["Pr", "Fa", "Cs"]
 
 [lines.9]
 product = "White2"
-steps = ["Pr", "Fa", "AgeJar1M", "Cs"]
+steps = ["Pr", "Fa", "Alm", "AgeJar1M", "Cs"]
 
 [lines.10]
 product = "White3"
-steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
+steps = ["Pr", "Fa", "Fl", "Alm", "AgeBar2M", "Cs"]
 
 # 6. Tasks Templates
 #
@@ -242,7 +243,7 @@ steps = ["Pr", "Fa", "Fl", "AgeBar2M", "Cs"]
     ]
 
 [templates.Alm]
-    alpha = 0.0
+    alpha = 48.0
     beta = 0.0
     compatible_units = [
         "inox_int_17000",
