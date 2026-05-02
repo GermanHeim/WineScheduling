@@ -1009,12 +1009,36 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     barr_te = active_pool_task_events(barr_tasks)
     jar_te = active_pool_task_events(jar_tasks)
 
-    barr_cross = [(i1, n1, i2, n2) for (i1, n1), (i2, n2) in combinations(barr_te, 2)]
-    jar_cross = [(i1, n1, i2, n2) for (i1, n1), (i2, n2) in combinations(jar_te, 2)]
-    print(
-        f"  [pool seq] Barrique cross-event pairs: {len(barr_cross)}, "
-        f"Jar cross-event pairs: {len(jar_cross)}"
-    )
+    def build_pool_pairs(pool_te, label):
+        # Prune pairs whose ordering is already forced by:
+        #   (a) intra-event sum constraint (n1 == n2: BarrCapacity covers it)
+        #   (b) g06 chain on same task (i1 == i2: strict ordering across n)
+        #   (c) ES/LF windows forcing strict precedence (LF[i1] <= ES[i2] etc.)
+        # Pruned pairs cannot overlap, so capacity / sequencing binaries are redundant.
+        pairs = []
+        skip_same_n = skip_same_i = skip_window = 0
+        for (i1, n1), (i2, n2) in combinations(pool_te, 2):
+            if n1 == n2:
+                skip_same_n += 1
+                continue
+            if i1 == i2:
+                skip_same_i += 1
+                continue
+            if task_LF[i1] <= task_ES[i2] or task_LF[i2] <= task_ES[i1]:
+                skip_window += 1
+                continue
+            pairs.append((i1, n1, i2, n2))
+        kept = len(pairs)
+        total = kept + skip_same_n + skip_same_i + skip_window
+        print(
+            f"  [pool seq] {label} pairs: kept {kept}/{total} "
+            f"(pruned: same-event {skip_same_n}, same-task {skip_same_i}, "
+            f"window {skip_window})"
+        )
+        return pairs
+
+    barr_cross = build_pool_pairs(barr_te, "Barrique")
+    jar_cross = build_pool_pairs(jar_te, "Jar")
 
     if barr_cross:
         model.BarrSeqFwd = pyo.Var(barr_cross, domain=pyo.Binary)
