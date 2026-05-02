@@ -1694,49 +1694,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         else 0.0
     )
 
-    # Exact linearization of alpha[i] * bj[i,j,n] * W[i,n] for non-storage tasks.
-    # W is binary, so the McCormick envelope is exact at integer points.
-    model.alpha_cooling_index = pyo.Set(
-        dimen=3,
-        initialize=[
-            (i, j, n)
-            for i in model.inst
-            for j in model.j
-            for n in model.n
-            if (i, j) in model.ij_nonpool
-        ],
-    )
-    model.zAlphaCooling = pyo.Var(
-        model.alpha_cooling_index, domain=pyo.NonNegativeReals
-    )
-
-    model.AlphaCoolingLin_lb = pyo.Constraint(
-        model.alpha_cooling_index,
-        rule=lambda m, i, j, n: m.zAlphaCooling[i, j, n]
-        >= m.bj[i, j, n]
-        - m.Bmax[i, j] * (1 - active_disjuncts[i, n].binary_indicator_var),
-    )
-    model.AlphaCoolingLin_ub_bj = pyo.Constraint(
-        model.alpha_cooling_index,
-        rule=lambda m, i, j, n: m.zAlphaCooling[i, j, n] <= m.bj[i, j, n],
-    )
-    model.AlphaCoolingLin_ub_w = pyo.Constraint(
-        model.alpha_cooling_index,
-        rule=lambda m, i, j, n: m.zAlphaCooling[i, j, n]
-        <= m.Bmax[i, j] * active_disjuncts[i, n].binary_indicator_var,
-    )
-
-    # beta=0 is validated above, so cooling time = alpha[i] * W[i,n] only.
-    # zAlphaCooling linearizes bj[i,j,n] * W[i,n] exactly (W is binary).
-    def cooling_term(i, j, n):
-        if i in model.inst:
-            return model.alpha[i] * model.zAlphaCooling[i, j, n]
-        return 0.0
-
+    # beta=0 enforced for exterior tasks, so cooling time = alpha[i].
+    # Disjunctive bounds force bj[i,j,n] = 0 when y[i,j,n] = 0, so bj already
+    # carries the on/off state. Cost = costCooling * alpha[i] * bj[i,j,n] is
+    # exact without auxiliary McCormick variables.
     model.CoolingCost = pyo.Expression(
         expr=model.costCooling
         * sum(
-            cooling_term(i, j, n)
+            model.alpha[i] * model.bj[i, j, n]
             for (i, j) in model.ij_nonpool
             if j in model.JEXT
             for n in model.n
