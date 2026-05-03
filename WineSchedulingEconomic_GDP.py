@@ -12,7 +12,13 @@ import pyomo.gdp as gdp
 import tomllib
 from pyomo.opt import SolverFactory
 
-from utils import export_results
+from utils import (
+    apply_warm_start,
+    export_results,
+    extract_warm_start,
+    load_warm_start,
+    save_warm_start,
+)
 
 # Apply Transformation, set to "hull" or "bigm"
 transformation_type = "hull"
@@ -1790,7 +1796,12 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     return model
 
 
-def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
+def solve_model(
+    model,
+    solver_name="gurobi",
+    time_limit=3600 * 2,
+    warmstart_path="warmstart_economic.json",
+):
     solver = SolverFactory(solver_name)
     if solver is None:
         print(f"Error: Solver {solver_name} not found")
@@ -1799,14 +1810,35 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
     # Set solver options
     solver.options["TimeLimit"] = time_limit
     solver.options["MIPGap"] = 0.001
-    solver.options["MIPFocus"] = 2
-    solver.options["Heuristics"] = 0.2
-    solver.options["Cuts"] = 2
-    solver.options["Symmetry"] = 2
-    solver.options["Presolve"] = 2
+    # solver.options["MIPGap"] = 0.02
+    # solver.options["MIPFocus"] = 2
+    # solver.options["Heuristics"] = 0.25
+    # solver.options["Cuts"] = 2
+    # solver.options["Symmetry"] = 2
+    # solver.options["Presolve"] = 2
+    # solver.options["Method"] = 2
 
-    print(f"Solving with {solver_name}...")
-    results = solver.solve(model, tee=True)
+    use_warmstart = False
+    if warmstart_path:
+        try:
+            snapshot = load_warm_start(warmstart_path)
+            apply_warm_start(model, snapshot)
+            use_warmstart = True
+            print(f"Applied warm start from {warmstart_path}")
+        except FileNotFoundError:
+            print(f"Warm start file {warmstart_path} not found; cold starting.")
+
+    if solver_name == "gurobi_persistent":
+        solver.set_instance(model)
+        print(f"Solving with {solver_name}...")
+        results = solver.solve(tee=True, warmstart=use_warmstart)
+    else:
+        print(f"Solving with {solver_name}...")
+        results = solver.solve(
+            model,
+            tee=True,
+            warmstart=use_warmstart,
+        )
 
     if (
         results.solver.termination_condition == pyo.TerminationCondition.optimal
@@ -1850,6 +1882,7 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
             "Wine Scheduling Economic GDP",
             "results_economic_gdp.txt",
         )
+        save_warm_start(extract_warm_start(model), "warmstart_economic.json")
     else:
         print("No solution or Infeasible")
 
@@ -1857,9 +1890,24 @@ def solve_model(model, solver_name="gurobi", time_limit=3600 * 2):
 
 
 if __name__ == "__main__":
+    import sys
+
+    warmstart_arg = None
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--warmstart":
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                warmstart_arg = args[i + 1]
+            else:
+                warmstart_arg = "warmstart_economic.json"
+            break
+        if a.startswith("--warmstart="):
+            warmstart_arg = a.split("=", 1)[1]
+            break
+
     try:
         model = create_wine_scheduling_model()
-        solve_model(model)
+        solve_model(model, warmstart_path=warmstart_arg)
     except Exception as e:
         print(f"Error: {e}")
         import traceback

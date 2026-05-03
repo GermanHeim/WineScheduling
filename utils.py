@@ -2,9 +2,142 @@
 Utility functions for Wine Scheduling Optimization models.
 """
 
+import json
 from datetime import datetime
 
 import pyomo.environ as pyo  # type: ignore
+import pyomo.gdp as gdp  # type: ignore
+
+
+DEFAULT_WARMSTART_VARS = (
+    "W",
+    "y",
+    "b",
+    "bj",
+    "Ts",
+    "Tf",
+    "Tsj",
+    "Tfj",
+    "ST",
+    "MS",
+)
+
+
+def idx_to_key(idx):
+    if idx is None:
+        return "__scalar__"
+    if isinstance(idx, tuple):
+        return json.dumps(list(idx))
+    return json.dumps([idx])
+
+
+def key_to_idx(key):
+    if key == "__scalar__":
+        return None
+    parts = json.loads(key)
+    return tuple(parts) if len(parts) > 1 else parts[0]
+
+
+def extract_warm_start(model, var_names=DEFAULT_WARMSTART_VARS):
+    """
+    Snapshot primal values of named variables plus all GDP disjunct
+    indicator variables. Returns a JSON-serializable dict suitable for
+    passing to apply_warm_start on a structurally similar model.
+    """
+    snapshot = {"vars": {}, "indicators": {}}
+    for name in var_names:
+        comp = model.find_component(name)
+        if comp is None:
+            continue
+        entries = {}
+        if comp.is_indexed():
+            for idx in comp:
+                v = comp[idx].value
+                if v is not None:
+                    entries[idx_to_key(idx)] = float(v)
+        else:
+            v = comp.value
+            if v is not None:
+                entries["__scalar__"] = float(v)
+        if entries:
+            snapshot["vars"][name] = entries
+
+    for disj in model.component_objects(gdp.Disjunct, descend_into=True):
+        for idx in disj:
+            try:
+                ind = disj[idx].binary_indicator_var
+            except AttributeError:
+                continue
+            v = ind.value
+            if v is None:
+                continue
+            snapshot["indicators"][f"{disj.name}::{idx_to_key(idx)}"] = float(v)
+    return snapshot
+
+
+def save_warm_start(snapshot, path):
+    with open(path, "w") as f:
+        json.dump(snapshot, f)
+    print(f"Warm start saved to {path}")
+
+
+def load_warm_start(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def apply_warm_start(model, snapshot):
+    """
+    Set .value on model variables matching snapshot. Missing components
+    or indices are silently skipped,since Gurobi accepts a partial start.
+    Returns (applied, skipped).
+    """
+    applied = skipped = 0
+
+    for name, entries in snapshot.get("vars", {}).items():
+        comp = model.find_component(name)
+        if comp is None:
+            skipped += len(entries)
+            continue
+        for key, val in entries.items():
+            if key == "__scalar__":
+                try:
+                    comp.set_value(val)
+                    applied += 1
+                except Exception:
+                    skipped += 1
+                continue
+            idx = key_to_idx(key)
+            try:
+                comp[idx].set_value(val)
+                applied += 1
+            except (KeyError, ValueError, AttributeError):
+                skipped += 1
+
+    disjunct_cache = {}
+    for d in model.component_objects(gdp.Disjunct, descend_into=True):
+        disjunct_cache[d.name] = d
+
+    for ind_key, val in snapshot.get("indicators", {}).items():
+        try:
+            disj_name, idx_part = ind_key.split("::", 1)
+        except ValueError:
+            skipped += 1
+            continue
+        disj = disjunct_cache.get(disj_name)
+        if disj is None:
+            skipped += 1
+            continue
+        idx = key_to_idx(idx_part)
+        try:
+            d_obj = disj if idx is None else disj[idx]
+            d_obj.binary_indicator_var.set_value(val)
+            applied += 1
+        except (KeyError, AttributeError):
+            skipped += 1
+
+    print(f"Warm start applied: {applied} values set, {skipped} skipped.")
+    return applied, skipped
 
 
 def export_results(model, model_name, filename=None):
