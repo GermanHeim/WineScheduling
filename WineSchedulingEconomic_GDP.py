@@ -1867,6 +1867,9 @@ def solve_model(
             print(
                 f"  Discard Cost:     -{pyo.value(model.DiscardCost, exception=False):.2f}"
             )
+            print(
+                f"  Alm Holding Cost: -{pyo.value(model.AlmHoldingCost, exception=False):.2f}"
+            )
             print("Penalties:")
             print(
                 f"  Makespan:         -{pyo.value(model.MakespanPenalty, exception=False):.2f}"
