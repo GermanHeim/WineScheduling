@@ -920,6 +920,22 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 model.Tf[alm_t, n].setub(lf_alm)
                 model.Ts[alm_t, n].setub(lf_alm)
 
+    # Per-unit time-window bounds: Tsj/Tfj inherit the tightest [min ES, max LF]
+    # across the compatible tasks of that unit.
+    for j in j_nonpool:
+        compat_tasks = [i for i in model.i if (i, j) in model.ij_nonpool]
+        if not compat_tasks:
+            continue
+        lb_j = min(task_ES.get(t, 0.0) for t in compat_tasks)
+        ub_j = max(task_LF.get(t, H_val) for t in compat_tasks)
+        for n in model.n:
+            if lb_j > 0:
+                model.Tsj[j, n].setlb(lb_j)
+                model.Tfj[j, n].setlb(lb_j)
+            if ub_j < H_val:
+                model.Tsj[j, n].setub(ub_j)
+                model.Tfj[j, n].setub(ub_j)
+
     # ========================================
     # DISJUNCT PRE-CREATION
     # ========================================
