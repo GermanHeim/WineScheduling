@@ -167,7 +167,7 @@
 #          false -> no ecobulk constraint
 [lines.1]
 product = "Red1"
-steps = ["Fa", "Fl", "AgeBar4M", "Cs"]
+steps = ["Fa", "Fl", "Alm", "AgeBar4M", "Cs"]
 
 [lines.2]
 product = "Red2"
