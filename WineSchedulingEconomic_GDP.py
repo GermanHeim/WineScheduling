@@ -21,7 +21,7 @@ from utils import (
 )
 
 # Apply Transformation, set to "hull" or "bigm"
-transformation_type = "hull"
+transformation_type = "bigm"
 
 
 def add_cover_cuts(model):
@@ -1814,7 +1814,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
 def solve_model(
     model,
-    solver_name="gurobi",
     time_limit=3600 * 2,
     warmstart_path="warmstart_economic.json",
 ):
