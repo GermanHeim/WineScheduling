@@ -1,3 +1,4 @@
+# type: ignore
 """
 Wine Scheduling Economic Optimization Model using Pyomo GDP.
 
@@ -22,6 +23,7 @@ from utils import (
 
 # Apply Transformation, set to "hull" or "bigm"
 transformation_type = "bigm"
+solver_name = "gurobi_persistent"
 
 
 def add_cover_cuts(model):
@@ -1806,6 +1808,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # initialised and before the GDP transformation flattens the disjuncts.
     add_cover_cuts(model)
 
+    # Stash for solver-side branching priority assignment.
+    model._active_disjuncts = active_disjuncts
+
     print(f"Applying GDP {transformation_type} transformation...")
     pyo.TransformationFactory(f"gdp.{transformation_type}").apply_to(model)
 
@@ -1845,6 +1850,10 @@ def solve_model(
 
     if solver_name == "gurobi_persistent":
         solver.set_instance(model)
+        for (_, _), d_active in model._active_disjuncts.items():
+            solver.set_var_attr(d_active.binary_indicator_var, "BranchPriority", 100)
+        for idx in model.y:
+            solver.set_var_attr(model.y[idx], "BranchPriority", 50)
         print(f"Solving with {solver_name}...")
         results = solver.solve(tee=True, warmstart=use_warmstart)
     else:
