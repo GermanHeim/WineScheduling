@@ -671,6 +671,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             if rho_val > 0:
                 market_prod_rho[ip] = (sp, rho_val)
 
+    # Per-task batch upper bound, reused below for the global on/off link
+    # b[i, n] <= b_ub[i] * W[i, n].
+    b_ub: dict[str, float] = {}
     for i in model.i:
         if i in barr_tasks:
             b_ub_i = barr_cap * n_barr
@@ -690,6 +693,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         if i in market_prod_rho:
             sp, rho_val = market_prod_rho[i]
             b_ub_i = min(b_ub_i, product_ub_cfg[sp] / rho_val)
+        b_ub[i] = b_ub_i
         for n in model.n:
             model.b[i, n].setub(b_ub_i)
 
@@ -1807,6 +1811,19 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # The helper must be called after y / Bmin / Bmax are fully
     # initialised and before the GDP transformation flattens the disjuncts.
     add_cover_cuts(model)
+
+    # Global on/off link: b[i, n] <= b_ub[i] * W[i, n].
+    # Exact (W=0 -> b=0; W=1 -> b <= b_ub). Tighter than cover_cut for pool tasks
+    # too, since it ties the batch directly to the activation binary rather than
+    # to the per-unit y / NumBarr / NumJar counts.
+    def b_on_off_rule(m, i, n):
+        return m.b[i, n] <= b_ub[i] * active_disjuncts[i, n].binary_indicator_var
+
+    model.b_on_off = pyo.Constraint(model.i, model.n, rule=b_on_off_rule)
+    print(
+        f"  [b_on_off] Added {len(model.i) * len(model.n)} batch on/off "
+        "linking constraints."
+    )
 
     # Stash for solver-side branching priority assignment.
     model._active_disjuncts = active_disjuncts
