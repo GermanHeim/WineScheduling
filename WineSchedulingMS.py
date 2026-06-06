@@ -755,7 +755,8 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             for n in model.n
             if (i, j) in model.ij
         )
-        return total_time <= model.H
+        # Unit load <= schedule length (makespan): valid cut tighter than H.
+        return total_time <= model.MS
 
     model.h09 = pyo.Constraint(model.j, rule=h09_rule)
 
