@@ -20,6 +20,8 @@ DEFAULT_WARMSTART_VARS = (
     "Tfj",
     "ST",
     "MS",
+    "NumBarr",
+    "NumJar",
 )
 
 
