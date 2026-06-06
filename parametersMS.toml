@@ -93,7 +93,7 @@
 # 'ST0': Initial Stock at Time = 0
 [initial_inventory]
     s_red = 35000
-    s_white_rose = 84000
+    s_white_rose = 95000
 
 # 4. Upper Bounds for the Model
 #
