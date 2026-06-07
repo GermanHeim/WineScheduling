@@ -63,7 +63,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     required_templates = {
         step for line_cfg in params["lines"].values() for step in line_cfg["steps"]
     }
-    storage_templates = {"Alm"}
+    storage_templates = {"Stg"}
     for template in required_templates:
         if template not in params["templates"]:
             raise ValueError(f"Missing template '{template}' in [templates] section")
@@ -103,14 +103,14 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Derived line groups (used for states, ICS/IPS and tc1)
     no_fl_lines = {l for l, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
-    ist_lines = {l for l, cfg in lines_cfg.items() if "Alm" in cfg["steps"]}
+    ist_lines = {l for l, cfg in lines_cfg.items() if "Stg" in cfg["steps"]}
     eco_lines = {l for l, cfg in lines_cfg.items() if cfg.get("ecobulk", False)}
 
     # Tasks
     model.i = pyo.Set(initialize=tasks)
 
     # Storage final tasks (derived from TOML)
-    model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
+    model.ist = pyo.Set(initialize=[f"Stg{l}" for l in ist_lines])
 
     # Non-storage tasks
     model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])  # type: ignore
@@ -139,7 +139,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             unit_instances.append(inst_name)
             unit_instances_by_base[unit_name].append(inst_name)
             unit_base_by_instance[inst_name] = unit_name
-            if "Alm" in unit_cfg.get("task_bounds", {}):
+            if "Stg" in unit_cfg.get("task_bounds", {}):
                 storage_units.append(inst_name)
 
     # Units
@@ -155,7 +155,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.inv_nJST = pyo.Param(initialize=1 / len(model.JST))  # type: ignore
 
     if len(storage_units) == 0:
-        raise ValueError("No storage units found with 'Alm' in [units.*.task_bounds]")
+        raise ValueError("No storage units found with 'Stg' in [units.*.task_bounds]")
 
     # Task-unit pairs (ij)
     ij_data = []
@@ -238,7 +238,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             else:
                 ICS_data.append((task, f"vl{line}"))
             IPS_data.append((task, line_product[line]))
-        elif stage == "Alm":
+        elif stage == "Stg":
             ICS_data.append((task, line_product[line]))
             IPS_data.append((task, line_product[line]))
     model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
@@ -283,7 +283,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         for idx in range(len(steps) - 1):
             current_task = f"{steps[idx]}{line}"
             next_task = f"{steps[idx + 1]}{line}"
-            if steps[idx + 1] == "Alm":
+            if steps[idx + 1] == "Stg":
                 tc2_data.append((current_task, next_task))
             elif steps[idx] == "Pr" and steps[idx + 1] == "Fa":
                 pass

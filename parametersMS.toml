@@ -123,7 +123,7 @@
 #        Fa = alcoholic fermentation
 #        Fl = lactic (malolactic) fermentation
 #        Cs = cold stabilization
-#        Alm = long-term storage
+#        Stg = long-term storage
 # ecobulk: (optional, default false)
 #          true -> product is stored in ecobulk-type tanks (subject to A16/A17)
 #          false -> no ecobulk constraint
@@ -133,12 +133,12 @@ steps = ["Fa", "Fl", "Cs"]
 
 [lines.2]
 product = "White1"
-steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
+steps = ["Pr", "Fa", "Fl", "Cs", "Stg"]
 ecobulk = true
 
 [lines.3]
 product = "Rose1"
-steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
+steps = ["Pr", "Fa", "Fl", "Cs", "Stg"]
 ecobulk = true
 
 [lines.4]
@@ -147,7 +147,7 @@ steps = ["Fa", "Fl", "Cs"]
 
 [lines.5]
 product = "White2"
-steps = ["Pr", "Fa", "Fl", "Cs", "Alm"]
+steps = ["Pr", "Fa", "Fl", "Cs", "Stg"]
 ecobulk = true
 
 [lines.6]
@@ -202,8 +202,8 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     beta = 0.0
     compatible_units = ["iso5000", "iso10000"]
 
-# Storage (Alm)
-[templates.Alm]
+# Storage (Stg)
+[templates.Stg]
     beta = 0.0
     compatible_units = ["inox22000", "subte6300", "subte7500", "subte9000", "subte9500", "subte12700", "iso5000", "iso10000"]
 
@@ -339,27 +339,27 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
     rhoIScons = {vl11 = -1.0}
     rhoISprod = {White4 = 1.0}
 
-[rho.Alm1]
+[rho.Stg1]
     rhoIScons = {Red1 = -1.0}
     rhoISprod = {Red1 = 1.0}
 
-[rho.Alm2]
+[rho.Stg2]
     rhoIScons = {White1 = -1.0}
     rhoISprod = {White1 = 1.0}
 
-[rho.Alm3]
+[rho.Stg3]
     rhoIScons = {Rose1 = -1.0}
     rhoISprod = {Rose1 = 1.0}
 
-[rho.Alm4]
+[rho.Stg4]
     rhoIScons = {Red2 = -1.0}
     rhoISprod = {Red2 = 1.0}
 
-[rho.Alm5]
+[rho.Stg5]
     rhoIScons = {White2 = -1.0}
     rhoISprod = {White2 = 1.0}
 
-[rho.Alm6]
+[rho.Stg6]
     rhoIScons = {Rose2 = -1.0}
     rhoISprod = {Rose2 = 1.0}
 
@@ -386,32 +386,32 @@ steps = ["Pr", "Fa", "Fl", "Cs"]
 
 [units.inox22000]
     quantity = 1
-    task_bounds = {Fa = [2200, 17600], Fl = [4400, 21560], Alm = [20900, 22000]}
+    task_bounds = {Fa = [2200, 17600], Fl = [4400, 21560], Stg = [20900, 22000]}
 
 [units.subte6300]
     quantity = 1
-    task_bounds = {Fl = [1260, 6174], Alm = [5985, 6300]}
+    task_bounds = {Fl = [1260, 6174], Stg = [5985, 6300]}
 
 [units.subte7500]
     quantity = 1
-    task_bounds = {Fl = [1500, 7350], Alm = [7125, 7500]}
+    task_bounds = {Fl = [1500, 7350], Stg = [7125, 7500]}
 
 [units.subte9000]
     quantity = 1
-    task_bounds = {Fl = [1800, 8820], Alm = [8550, 9000]}
+    task_bounds = {Fl = [1800, 8820], Stg = [8550, 9000]}
 
 [units.subte9500]
     quantity = 1
-    task_bounds = {Fl = [1900, 9310], Alm = [9025, 9500]}
+    task_bounds = {Fl = [1900, 9310], Stg = [9025, 9500]}
 
 [units.subte12700]
     quantity = 1
-    task_bounds = {Fl = [2540, 12446], Alm = [12065, 12700]}
+    task_bounds = {Fl = [2540, 12446], Stg = [12065, 12700]}
 
 [units.iso5000]
     quantity = 1
-    task_bounds = {Cs = [1000, 5000], Alm = [4750, 5000]}
+    task_bounds = {Cs = [1000, 5000], Stg = [4750, 5000]}
 
 [units.iso10000]
     quantity = 1
-    task_bounds = {Cs = [2000, 10000], Alm = [9500, 10000]}
+    task_bounds = {Cs = [2000, 10000], Stg = [9500, 10000]}

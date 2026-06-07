@@ -34,7 +34,7 @@ TASK_COLORS: dict[str, str] = {
     "Fl": "#5B8DB8",  # malolactic fermentation
     "Age": "#C8A97E",  # aging (barrel / jar)
     "Cs": "#6BBF7A",  # cold stabilization
-    "Alm": "#9B7EC8",  # storage
+    "Stg": "#9B7EC8",  # storage
 }
 
 # Unit order for the y-axis (makespan models)
@@ -436,7 +436,7 @@ def format_task_label(task_name: str, publish_mode: bool) -> str:
     static_names = {
         "Fa": "Alcoholic Fermentation",
         "Fl": "Malolactic Fermentation",
-        "Alm": "Storage",
+        "Stg": "Storage",
         "Cs": "Cold Stabilization",
     }
     if stage in static_names and line:
@@ -597,6 +597,13 @@ def parse_stn_data(toml_file: str) -> dict:
     # raw materials are shared pools (e.g. s_red, s_white_rose) instead of s1..sN.
     states.update(initial_inventory.keys())
 
+    # Detect stg lines. vbuf and AgeViaStg are internal model details; the STN shows
+    # Stg as a single storage circle with arcs vl→Stg and Stg→va.
+    stg_lines: list[str] = []
+    for line, cfg in lines_cfg.items():
+        if "Stg" in cfg["steps"]:
+            stg_lines.append(line)
+
     arcs = []
     for task in tasks:
         rho = rho_cfg.get(task, {})
@@ -623,12 +630,32 @@ def parse_stn_data(toml_file: str) -> dict:
                 )
                 states.add(state)
 
+    # Synthesise arcs for Stg (rho not in TOML).
+    # Shown as two arcs: vl→Stg (consume) and Stg→Age{line} (produce), collapsing
+    # the internal vbuf/AgeViaStg chain. Wine held in Stg feeds the same aging task
+    # (same barriques/jars) as the direct path, Stg is a pre-aging hold only.
+    for line, cfg in lines_cfg.items():
+        if "Stg" not in cfg["steps"]:
+            continue
+        aging_step = next((s for s in cfg["steps"] if s.startswith("Age")), None)
+        if not aging_step:
+            continue
+        has_fl = "Fl" in cfg["steps"]
+        pre_ag = f"vl{line}" if has_fl else f"v{line}"
+        stg_task = f"Stg{line}"
+        aging_task = f"{aging_step}{line}"
+        arcs += [
+            {"src": pre_ag, "dst": stg_task, "coef": 1.0, "kind": "cons"},
+            {"src": stg_task, "dst": aging_task, "coef": 1.0, "kind": "prod"},
+        ]
+
     return {
         "tasks": tasks,
         "states": sorted(states),
         "arcs": arcs,
         "lines_cfg": lines_cfg,
         "line_product": line_product,
+        "stg_lines": stg_lines,
         "products": products,
         "initial_inventory": initial_inventory,
         "product_ub": product_ub,
@@ -641,12 +668,17 @@ def format_arc_label(value: float) -> str:
     return f"{value:.2f}"
 
 
+# Y-offset for the Stg detour path relative to the line's main row.
+_STG_Y_OFFSET = -0.35
+
+
 def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
     lines_cfg = stn_data["lines_cfg"]
     tasks = stn_data["tasks"]
     states = stn_data["states"]
     line_product = stn_data["line_product"]
     arcs = stn_data["arcs"]
+    stg_lines: set[str] = set(stn_data.get("stg_lines", []))
 
     sorted_lines = sorted(lines_cfg.keys(), key=lambda x: int(x))
     y_by_line = {line: -idx for idx, line in enumerate(sorted_lines)}
@@ -657,7 +689,7 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
         "Fl": 3.4,
         "Age": 4.1,
         "Cs": 5.0,
-        "Alm": 6.1,
+        # Stg and AgeViaStg are positioned per-task below using _STG_Y_OFFSET
     }
 
     # Place material states between the stages that consume/produce them to preserve
@@ -681,6 +713,10 @@ def build_stn_positions(stn_data: dict) -> dict[str, tuple[float, float]]:
             ]
             y_pr = sum(pr_ys) / len(pr_ys) if pr_ys else 0.0
             pos["Pr"] = (stage_x.get("Pr", 1.3), y_pr)
+        elif stage == "Stg":
+            # Stg holding tank: between Fl and Age, on the Stg detour row
+            line = task_line(task)
+            pos[task] = (3.85, y_by_line[line] + _STG_Y_OFFSET)
         else:
             line = task_line(task)
             pos[task] = (stage_x.get(stage, 3.0), y_by_line[line])
@@ -898,27 +934,43 @@ def plot_stn_graph(toml_file: str, ax: plt.Axes, show_dsch: bool = True) -> None
         ax.text(x, y - 0.36, label, fontsize=7, ha="center", va="top", zorder=4)
 
     # Draw task nodes
+    stg_task_set = {f"Stg{ln}" for ln in stn_data.get("stg_lines", [])}
     for task in task_nodes:
         x, y = pos[task]
         stage = task_stage_key(task)
-        ax.scatter(
-            [x],
-            [y],
-            s=200,
-            marker="^",
-            c=TASK_COLORS.get(stage, "#BBBBBB"),
-            edgecolors="#2D3436",
-            linewidths=1.0,
-            zorder=4,
-        )
-        ax.text(x, y + 0.24, task, fontsize=7, ha="center", va="bottom", zorder=5)
+        if task in stg_task_set:
+            # Stg: storage circle, visually distinct from processing triangles
+            ax.scatter(
+                [x],
+                [y],
+                s=280,
+                marker="o",
+                c=TASK_COLORS.get("Stg", "#9B7EC8"),
+                edgecolors="#4A235A",
+                linewidths=1.5,
+                zorder=4,
+            )
+            ax.text(x, y - 0.32, task, fontsize=7, ha="center", va="top", zorder=5)
+        else:
+            ax.scatter(
+                [x],
+                [y],
+                s=200,
+                marker="^",
+                c=TASK_COLORS.get(stage, "#BBBBBB"),
+                edgecolors="#2D3436",
+                linewidths=1.0,
+                zorder=4,
+            )
+            ax.text(x, y + 0.24, task, fontsize=7, ha="center", va="bottom", zorder=5)
 
     ax.set_title(
         "State-Task Network (STN): States, Tasks, Material Flows, and Yield Fractions",
         fontsize=11,
     )
     ax.set_xlim(-0.3, 7.3)
-    ax.set_ylim(-len(stn_data["lines_cfg"]) - 0.8, 2.1)
+    has_stg = bool(stn_data.get("stg_lines"))
+    ax.set_ylim(-len(stn_data["lines_cfg"]) - (1.2 if has_stg else 0.8), 2.1)
     ax.axis("off")
 
     legend_items = [
@@ -1396,7 +1448,7 @@ def plot_solution(
         ("Fl", "Malolactic fermentation", TASK_COLORS["Fl"]),
         ("Age", "Aging", TASK_COLORS["Age"]),
         ("Cs", "Cold stabilization", TASK_COLORS["Cs"]),
-        ("Alm", "Storage", TASK_COLORS["Alm"]),
+        ("Stg", "Storage", TASK_COLORS["Stg"]),
     ]
     legend_handles: list[Artist] = [
         mpatches.Patch(

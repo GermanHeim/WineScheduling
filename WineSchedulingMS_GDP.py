@@ -1,3 +1,4 @@
+# type: ignore
 """
 Wine Scheduling Optimization Model using Pyomo GDP
 
@@ -15,7 +16,7 @@ from pyomo.opt import SolverFactory
 from utils import export_results
 
 # Apply Transformation, set to "hull" or "bigm"
-transformation_type = "hull"
+transformation_type = "bigm"
 
 
 def add_cover_cuts(model):
@@ -114,11 +115,11 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
 
     # Derived line groups (used for states, ICS/IPS and tc1)
     no_fl_lines = {l for l, cfg in lines_cfg.items() if "Fl" not in cfg["steps"]}
-    ist_lines = {l for l, cfg in lines_cfg.items() if "Alm" in cfg["steps"]}
+    ist_lines = {l for l, cfg in lines_cfg.items() if "Stg" in cfg["steps"]}
     eco_lines = {l for l, cfg in lines_cfg.items() if cfg.get("ecobulk", False)}
 
     model.i = pyo.Set(initialize=tasks)
-    model.ist = pyo.Set(initialize=[f"Alm{l}" for l in ist_lines])
+    model.ist = pyo.Set(initialize=[f"Stg{l}" for l in ist_lines])
     model.inst = pyo.Set(initialize=[t for t in tasks if t not in model.ist])
     model.ipst = pyo.Set(initialize=[t for t in tasks if t.startswith("Cs")])
     model.inpst = pyo.Set(
@@ -142,7 +143,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             inst_name = unit_name if quantity == 1 else f"{unit_name}#{idx}"
             unit_instances.append(inst_name)
             unit_instances_by_base[unit_name].append(inst_name)
-            if "Alm" in unit_cfg.get("task_bounds", {}):
+            if "Stg" in unit_cfg.get("task_bounds", {}):
                 storage_units.append(inst_name)
 
     model.j = pyo.Set(initialize=unit_instances)
@@ -152,7 +153,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
     model.inv_nJST = pyo.Param(initialize=1 / len(model.JST))
 
     if len(storage_units) == 0:
-        raise ValueError("No storage units found with 'Alm' in [units.*.task_bounds]")
+        raise ValueError("No storage units found with 'Stg' in [units.*.task_bounds]")
 
     # Task-unit pairs (ij)
     ij_data = []
@@ -232,7 +233,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
             else:
                 ICS_data.append((task, f"vl{line}"))
             IPS_data.append((task, line_product[line]))
-        elif stage == "Alm":
+        elif stage == "Stg":
             ICS_data.append((task, line_product[line]))
             IPS_data.append((task, line_product[line]))
     model.IPS = pyo.Set(initialize=IPS_data, dimen=2)
@@ -261,7 +262,7 @@ def create_wine_scheduling_model(toml_file="parametersMS.toml"):
         for idx in range(len(steps) - 1):
             current_task = f"{steps[idx]}{line}"
             next_task = f"{steps[idx + 1]}{line}"
-            if steps[idx + 1] == "Alm":
+            if steps[idx + 1] == "Stg":
                 tc2_data.append((current_task, next_task))
             elif steps[idx] == "Pr" and steps[idx + 1] == "Fa":
                 pass
@@ -935,6 +936,11 @@ def solve_model(model, solver_name="gurobi", time_limit=3600):
     # Set solver options
     solver.options["TimeLimit"] = time_limit
     solver.options["MIPGap"] = 0.001
+    # solver.options["MIPFocus"] = 2
+    # solver.options["Heuristics"] = 0.2
+    solver.options["Cuts"] = 2
+    solver.options["Symmetry"] = 2
+    solver.options["Presolve"] = 2
 
     print(f"Solving with {solver_name}...")
     results = solver.solve(model, tee=True)
