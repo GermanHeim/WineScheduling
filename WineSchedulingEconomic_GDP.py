@@ -1129,7 +1129,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         ]
         if not terms:
             return pyo.Constraint.Feasible
-        return sum(terms) <= model.H
+        return sum(terms) <= model.MS
 
     model.h09 = pyo.Constraint(model.j, rule=h09_rule)
 
