@@ -1537,15 +1537,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             # Inactive Disjunct (not W_{i,n})
             d_inactive = inactive_disjuncts[i, n]
 
-            add_constr(d_inactive, "b_zero", model.b[i, n] == 0)
-
-            # y_zero / bj_zero only needed for non-pool tasks
             if compatible_units:
                 d_inactive.y_zero = pyo.ConstraintList()
                 d_inactive.bj_zero = pyo.ConstraintList()
                 for j in compatible_units:
                     d_inactive.y_zero.add(model.y[i, j, n] == 0)
                     d_inactive.bj_zero.add(model.bj[i, j, n] == 0)
+            else:
+                add_constr(d_inactive, "nonempty", model.b[i, n] >= 0)
 
             # Outer disjunction
             model.add_component(
@@ -1558,7 +1557,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # ========================================
     # Processing tasks (incl. pool): Tf = Ts + alpha*W + beta*b.
     #   W=1 -> Tf = Ts + alpha + beta*b (active duration)
-    #   W=0 -> b=0 (b_zero / b_on_off) -> Tf = Ts (idle collapse)
+    #   W=0 -> b=0 (b_on_off) -> Tf = Ts (idle collapse)
     # Storage tasks (iStgInt, variable duration): Ts+alpha <= Tf <= Ts+Dmax when
     #   active, Tf = Ts when idle. Dmax = task time-window width.
     proc_tasks = [i for i in model.i if i not in model.iStgInt]
