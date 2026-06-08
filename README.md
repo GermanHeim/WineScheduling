@@ -408,7 +408,7 @@ $$ \sum_{i \in I_j} y_{i,j,n} \le 1 \quad \forall j, n $$
 
 $$\neg W_{i,n} \implies \mathrm{Ts}_{i,n} = \mathrm{Tf}_{i,n-1} \quad \forall i \in I,\ n > 1$$
 
-This prevents $\mathrm{Ts}_{i,n}$ from floating freely in $[0, H]$ when the task is idle, which otherwise creates flat LP plateaus and symmetric integer solutions.
+This prevents $\mathrm{Ts}_{i,n}$ from floating freely in $[0, H]$ when the task is idle, which otherwise creates flat LP plateaus and symmetric integer solutions. (In the economic model this collapse is moved out of the disjunct into a global tight-$M$ constraint (see [Batch and Duration Linking](#batch-and-duration-linking).)
 
 **Variable time-window bounds.** In addition to using $\mathrm{ES}_i$ and $\mathrm{LF}_i$ in Big-M computation, they are applied as direct variable bounds before solving:
 
@@ -624,7 +624,7 @@ This prevents discarding an entire batch that was already held in Stg (which wou
 
 $$b_{\mathrm{AgeViaStg}_l,n+1} + \mathrm{Discard}_{\mathrm{vbuf}_l,n+1} = b_{\mathrm{Stg}_l,n} \cdot \rho^{\mathrm{prod}}_{\mathrm{Stg}_l,\mathrm{vbuf}_l}$$
 
-**Variable Stg duration.** Stg holding tasks ($i \in I^{\mathrm{stg}}$) have a variable duration: a lower bound rather than the fixed-duration equality of processing tasks. This is expressed by the global `duration_stor_lb/ub` constraints (see [Batch and Duration Linking](#batch-and-duration-linking-lp-tightening)), not inside the disjunct:
+**Variable Stg duration.** Stg holding tasks ($i \in I^{\mathrm{stg}}$) have a variable duration: a lower bound rather than the fixed-duration equality of processing tasks. This is expressed by the global `duration_stor_lb/ub` constraints (see [Batch and Duration Linking](#batch-and-duration-linking)), not inside the disjunct:
 
 $$\mathrm{Ts}_{\mathrm{Stg}_l,n} + \alpha_{\mathrm{Stg}} W_{\mathrm{Stg}_l,n} \;\le\; \mathrm{Tf}_{\mathrm{Stg}_l,n} \;\le\; \mathrm{Ts}_{\mathrm{Stg}_l,n} + D^{\max}_{\mathrm{Stg}_l} W_{\mathrm{Stg}_l,n} \quad (\alpha_{\mathrm{Stg}} = 48\text{ h})$$
 
@@ -657,7 +657,7 @@ $$ W_{i_k,n} = 0 \quad \forall\, n < k \;\text{ or }\; n > N-(K-k) $$
 
 #### Batch and Duration Linking
 
-Two constraint groups that the makespan GDP model leaves inside the task disjunction are lifted out into global linear constraints keyed on the activation binary $W_{i,n}$. The motivation is that `gdp.hull` blows up on this model (the disjuncts share many continuous variables,  $\mathrm{Ts}, \mathrm{Tf}, b, b_{i,j,n}, \mathrm{Tsj}, \mathrm{Tfj}$, over wide ranges, and the active disjunct nests a second unit-selection layer), so the model is solved with `gdp.bigm` and the relaxation is strengthened manually instead.
+Three constraint groups that the makespan GDP model leaves inside the task disjunction are lifted out into global linear constraints keyed on the activation binary $W_{i,n}$. The motivation is that `gdp.hull` blows up on this model (the disjuncts share many continuous variables,  $\mathrm{Ts}, \mathrm{Tf}, b, b_{i,j,n}, \mathrm{Tsj}, \mathrm{Tfj}$, over wide ranges, and the active disjunct nests a second unit-selection layer), so the model is solved with `gdp.bigm` and the relaxation is strengthened manually instead.
 
 **Batch on/off link (`b_on_off`).** A direct link tying the batch to activation:
 
@@ -674,6 +674,12 @@ $$ \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} + \beta_i b_{i,n} $$
 Storage / holding tasks ($i \in I^{\mathrm{stg}}$, variable duration):
 
 $$ \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} \;\le\; \mathrm{Tf}_{i,n} \;\le\; \mathrm{Ts}_{i,n} + D^{\max}_i W_{i,n}, \qquad D^{\max}_i = \mathrm{LF}_i - \mathrm{ES}_i $$
+
+**Global idle-collapse (`idle_collapse`).** The symmetry-breaking collapse of an idle event's start time onto the previous finish (kept inside the inactive disjunct in the makespan model) is likewise removed from the GDP block, with a tight $M = D^{\max}_i$ instead of $H$. Together with `g06` ($\mathrm{Ts}_{i,n} \ge \mathrm{Tf}_{i,n-1}$):
+
+$$ \mathrm{Ts}_{i,n} \le \mathrm{Tf}_{i,n-1} + D^{\max}_i\, W_{i,n} \qquad \forall i \in I,\ n > 1 $$
+
+$W_{i,n}=0$ gives $\mathrm{Ts}_{i,n} = \mathrm{Tf}_{i,n-1}$ (the same collapse). $W_{i,n}=1$ relaxes by the window width, not $H$. $M = D^{\max}_i$ is valid since $\mathrm{Tf}_{i,n-1} \ge \mathrm{ES}_i$ and $\mathrm{Ts}_{i,n} \le \mathrm{LF}_i$.
 
 #### Remaining Economic Constraints
 
