@@ -31,9 +31,10 @@
       - [Demand Constraint](#demand-constraint)
       - [Zero-Inventory Constraints](#zero-inventory-constraints)
       - [Makespan Lower Bound](#makespan-lower-bound)
-      - [Ecobulk Alm Maximum Duration](#ecobulk-alm-maximum-duration)
-      - [Two-Path Intermediate Alm Storage](#two-path-intermediate-alm-storage)
+      - [Ecobulk Stg Maximum Duration](#ecobulk-stg-maximum-duration)
+      - [Two-Path Intermediate Stg Storage](#two-path-intermediate-stg-storage)
       - [Static Preprocessing (Event-Range Fixing)](#static-preprocessing-event-range-fixing)
+      - [Batch and Duration Linking](#batch-and-duration-linking)
       - [Remaining Economic Constraints](#remaining-economic-constraints)
     - [Economic Objective](#economic-objective)
     - [Barrique and Jar Pool Aggregation](#barrique-and-jar-pool-aggregation)
@@ -496,10 +497,10 @@ This section documents the economic variant implemented in `WineSchedulingEconom
 - $S^{\mathrm{Age}} \subset S$: Post-aging, pre-cold-stabilization intermediate states ($\mathrm{va}_l$ for lines where aging precedes cold stabilization). Treated as NIS - cold stabilization must begin immediately after aging finishes.
 - $I^{\mathrm{Age}} \subseteq I$: Aging tasks ($\mathrm{AgeBar}^*$, $\mathrm{AgeJar}^*$). Each product $s$ has at most one aging task $i^{\mathrm{Age}}_s$.
 - $J^{\mathrm{ext}} \subseteq J$: Exterior units that require active cooling (flagged via `exterior = true` in the TOML).
-- $L^{\mathrm{alm}} \subseteq L$: Production lines that include an intermediate Alm (storage holding) step before aging.
-- $I^{\mathrm{alm}} \subseteq I$: Alm holding tasks, one per line in $L^{\mathrm{alm}}$ (e.g. $\mathrm{Alm}_l$).
-- $I^{\mathrm{almVar}} \subseteq I$: Alm-path aging variant tasks, one per line in $L^{\mathrm{alm}}$ (e.g. $\mathrm{AgeBar4MAlm}_l$). These consume the buffer state $\mathrm{vbuf}_l$ instead of $\mathrm{vl}_l$.
-- $S^{\mathrm{vbuf}} \subset S^{\mathrm{ZW}}$: Intermediate buffer states, one per alm line ($\mathrm{vbuf}_l$). Classified as zero-wait.
+- $L^{\mathrm{stg}} \subseteq L$: Production lines that include an intermediate Stg (storage holding) step before aging.
+- $I^{\mathrm{stg}} \subseteq I$: Stg holding tasks, one per line in $L^{\mathrm{stg}}$ (e.g. $\mathrm{Stg}_l$).
+- $I^{\mathrm{stgVar}} \subseteq I$: Stg-path aging variant tasks, one per line in $L^{\mathrm{stg}}$ (e.g. $\mathrm{AgeBar4MStg}_l$). These consume the buffer state $\mathrm{vbuf}_l$ instead of $\mathrm{vl}_l$.
+- $S^{\mathrm{vbuf}} \subset S^{\mathrm{ZW}}$: Intermediate buffer states, one per stg line ($\mathrm{vbuf}_l$). Classified as zero-wait.
 
 ### Additional Parameters
 
@@ -521,9 +522,9 @@ $$\mathrm{task}_{i_{\mathrm{max},i}} = i_{\mathrm{max,young}} \quad \forall i \i
 
 where $n_{\mathrm{young}}^{\mathrm{press}}$ is the number of pressing lines whose product has no aging stage and $n_{\mathrm{aged}}^{\mathrm{press}}$ is the remaining pressing lines. Each aged pressing line may need up to $i_{\mathrm{max}}$ press runs, hence the $i_{\mathrm{max}}$ multiplier.
 
-**Cs task_imax for alm lines.** For lines $l \in L^{\mathrm{alm}}$, cold stabilization ($\mathrm{Cs}_l$) must follow every aging activation regardless of which path was taken. Its per-task limit is set dynamically:
+**Cs task_imax for stg lines.** For lines $l \in L^{\mathrm{stg}}$, cold stabilization ($\mathrm{Cs}_l$) must follow every aging activation regardless of which path was taken. Its per-task limit is set dynamically:
 
-$$\mathrm{task}_{i_{\mathrm{max},\mathrm{Cs}_l}} = \mathrm{task}_{i_{\mathrm{max},\mathrm{AgeDirect}_l}} + \mathrm{task}_{i_{\mathrm{max},\mathrm{AgeViaAlm}_l}} \quad \forall l \in L^{\mathrm{alm}}$$
+$$\mathrm{task}_{i_{\mathrm{max},\mathrm{Cs}_l}} = \mathrm{task}_{i_{\mathrm{max},\mathrm{AgeDirect}_l}} + \mathrm{task}_{i_{\mathrm{max},\mathrm{AgeViaStg}_l}} \quad \forall l \in L^{\mathrm{stg}}$$
 
 This ensures the solver is never forced to discard post-aging wine simply because the $\mathrm{Cs}$ limit was tighter than the combined aging throughput.
 
@@ -576,7 +577,7 @@ $$ \mathrm{FinalProd}_s + \mathrm{Outsource}_s \ge D_s \quad \forall s \in S^{\m
 
 $$\sum_{n \in N} W_{i,n} \ge \left\lceil \frac{D_{s_l}}{\bar{B}_i} \right\rceil \quad \forall l : s_l \notin \mathrm{Outsource},\ \forall i \in \mathrm{chain}(l)\setminus\{\mathrm{Pr}\}$$
 
-Using the per-unit capacity $B^{\mathrm{max}}_{i,j}$ for pool tasks instead of $\bar{n}_{\mathrm{pool}}\cdot B_{\mathrm{pool}}$ would overstate the required activations (e.g. $\lceil 5500/250 \rceil = 22$ barriques required versus the correct $\lceil 5500/21250 \rceil = 1$). With $i_{\mathrm{max}}=2$ this error clamps to $\min(22,2)=2$, imposing two runs of a 15-month aging step in a 16000 h horizon, an infeasible constraint. The cut is only added when the result is $\ge 2$, so with correct pool capacities it usually fires only for Alm or fermentation tasks where demand genuinely exceeds a single-tank fill.
+Using the per-unit capacity $B^{\mathrm{max}}_{i,j}$ for pool tasks instead of $\bar{n}_{\mathrm{pool}}\cdot B_{\mathrm{pool}}$ would overstate the required activations (e.g. $\lceil 5500/250 \rceil = 22$ barriques required versus the correct $\lceil 5500/21250 \rceil = 1$). With $i_{\mathrm{max}}=2$ this error clamps to $\min(22,2)=2$, imposing two runs of a 15-month aging step in a 16000 h horizon, an infeasible constraint. The cut is only added when the result is $\ge 2$, so with correct pool capacities it usually fires only for Stg or fermentation tasks where demand genuinely exceeds a single-tank fill.
 
 **Shared pressing minimum-activation cut (A06_min_Pr).** In the economic model this cut is now added conditionally for non-outsource pressed lines, using the required total must volume and press yield (same structure as the makespan version, with outsourcing-aware filtering).
 
@@ -594,65 +595,85 @@ A valid lower bound on the makespan is derived from the minimum total processing
 
 $$\mathrm{MS} \ge \max_{l \in L} \sum_{k \in \text{steps}(l)} \alpha_k$$
 
-#### Ecobulk Alm Maximum Duration
+#### Ecobulk Stg Maximum Duration
 
-Ecobulk tanks must not hold wine for more than 720 hours (1 month). For each Ecobulk-compatible Alm task $i \in I^{\mathrm{alm}}$ assigned to Ecobulk unit $j$:
+Ecobulk tanks must not hold wine for more than 720 hours (1 month). For each Ecobulk-compatible Stg task $i \in I^{\mathrm{stg}}$ assigned to Ecobulk unit $j$:
 
 $$\mathrm{Tf}_{i,n} - \mathrm{Ts}_{i,n} \le 720 + H(1 - y_{i,j,n})$$
 
-#### Two-Path Intermediate Alm Storage
+#### Two-Path Intermediate Stg Storage
 
-For lines $l \in L^{\mathrm{alm}}$, wine may optionally pass through an intermediate holding tank (Alm) before barrel or jar aging. This creates two parallel aging paths that both produce the same downstream state $\mathrm{va}_l$:
+For lines $l \in L^{\mathrm{stg}}$, wine may optionally pass through an intermediate holding tank (Stg) before barrel or jar aging. This creates two parallel aging paths that both produce the same downstream state $\mathrm{va}_l$:
 
 - **Direct path:** $\mathrm{Fl}_l \to \mathrm{vl}_l \to \mathrm{AgeDirect}_l \to \mathrm{va}_l \to \mathrm{Cs}_l$
-- **Alm path:** $\mathrm{Fl}_l \to \mathrm{vl}_l \to \mathrm{Alm}_l \to \mathrm{vbuf}_l \to \mathrm{AgeViaAlm}_l \to \mathrm{va}_l \to \mathrm{Cs}_l$
+- **Stg path:** $\mathrm{Fl}_l \to \mathrm{vl}_l \to \mathrm{Stg}_l \to \mathrm{vbuf}_l \to \mathrm{AgeViaStg}_l \to \mathrm{va}_l \to \mathrm{Cs}_l$
 
-Alm is optional: the solver activates it only when it is economically beneficial.
+Stg is optional: the solver activates it only when it is economically beneficial.
 
 **Buffer state.** $\mathrm{vbuf}_l \in S^{\mathrm{vbuf}} \subset S^{\mathrm{ZW}}$. Zero-wait classification forces $\mathrm{ST}_{\mathrm{vbuf}_l,n}=0$ at every event and the tight timing constraint:
 
-$$W_{\mathrm{Alm}_l,n} \land W_{\mathrm{AgeViaAlm}_l,n+1} \implies \mathrm{Ts}_{\mathrm{AgeViaAlm}_l,n+1} = \mathrm{Tf}_{\mathrm{Alm}_l,n}$$
+$$W_{\mathrm{Stg}_l,n} \land W_{\mathrm{AgeViaStg}_l,n+1} \implies \mathrm{Ts}_{\mathrm{AgeViaStg}_l,n+1} = \mathrm{Tf}_{\mathrm{Stg}_l,n}$$
 
-AgeViaAlm must begin exactly when Alm ends — no dwell in an untracked intermediate vessel.
+AgeViaStg must begin exactly when Stg ends, no dwell in an untracked intermediate vessel.
 
-**Mandatory coupling (tc1).** If Alm runs, the Alm-path aging variant must run at the next event:
+**Mandatory coupling (tc1).** If Stg runs, the Stg-path aging variant must run at the next event:
 
-$$W_{\mathrm{AgeViaAlm}_l,n+1} = W_{\mathrm{Alm}_l,n} \quad \forall l \in L^{\mathrm{alm}},\ n < N$$
+$$W_{\mathrm{AgeViaStg}_l,n+1} = W_{\mathrm{Stg}_l,n} \quad \forall l \in L^{\mathrm{stg}},\ n < N$$
 
-This prevents discarding an entire batch that was already held in Alm (which would make the holding step pointless). Small capacity-granularity discards (e.g. 750 L not fitting into a whole number of 250 L barriques) are still absorbed by $\mathrm{Discard}_{\mathrm{vbuf}_l,n}$ via the zero-wait material balance:
+This prevents discarding an entire batch that was already held in Stg (which would make the holding step pointless). Small capacity-granularity discards (e.g. 750 L not fitting into a whole number of 250 L barriques) are still absorbed by $\mathrm{Discard}_{\mathrm{vbuf}_l,n}$ via the zero-wait material balance:
 
-$$b_{\mathrm{AgeViaAlm}_l,n+1} + \mathrm{Discard}_{\mathrm{vbuf}_l,n+1} = b_{\mathrm{Alm}_l,n} \cdot \rho^{\mathrm{prod}}_{\mathrm{Alm}_l,\mathrm{vbuf}_l}$$
+$$b_{\mathrm{AgeViaStg}_l,n+1} + \mathrm{Discard}_{\mathrm{vbuf}_l,n+1} = b_{\mathrm{Stg}_l,n} \cdot \rho^{\mathrm{prod}}_{\mathrm{Stg}_l,\mathrm{vbuf}_l}$$
 
-**Variable Alm duration.** The active-task disjunct for $i \in I^{\mathrm{alm}}$ uses a lower-bound inequality rather than the equality used for fixed-duration tasks:
+**Variable Stg duration.** Stg holding tasks ($i \in I^{\mathrm{stg}}$) have a variable duration: a lower bound rather than the fixed-duration equality of processing tasks. This is expressed by the global `duration_stor_lb/ub` constraints (see [Batch and Duration Linking](#batch-and-duration-linking-lp-tightening)), not inside the disjunct:
 
-$$W_{\mathrm{Alm}_l,n} \implies \mathrm{Tf}_{\mathrm{Alm}_l,n} \ge \mathrm{Ts}_{\mathrm{Alm}_l,n} + \alpha_{\mathrm{Alm}} \quad (\alpha_{\mathrm{Alm}} = 48\text{ h})$$
+$$\mathrm{Ts}_{\mathrm{Stg}_l,n} + \alpha_{\mathrm{Stg}} W_{\mathrm{Stg}_l,n} \;\le\; \mathrm{Tf}_{\mathrm{Stg}_l,n} \;\le\; \mathrm{Ts}_{\mathrm{Stg}_l,n} + D^{\max}_{\mathrm{Stg}_l} W_{\mathrm{Stg}_l,n} \quad (\alpha_{\mathrm{Stg}} = 48\text{ h})$$
 
-The solver is free to extend the hold beyond the minimum. The ecobulk cap (see above) provides the upper bound for ecobulks.
+The solver is free to extend the hold between the minimum $\alpha_{\mathrm{Stg}}$ and the time-window width $D^{\max}_{\mathrm{Stg}_l} = \mathrm{LF}_{\mathrm{Stg}_l} - \mathrm{ES}_{\mathrm{Stg}_l}$. The ecobulk cap (see above) provides a tighter upper bound when the task runs in an ecobulk unit.
 
-**Rho overrides for AgeViaAlm.** The Alm-variant aging task consumes the buffer state rather than the pre-aging filtration state:
+**Rho overrides for AgeViaStg.** The Stg-variant aging task consumes the buffer state rather than the pre-aging filtration state:
 
-$$\rho^{\mathrm{cons}}_{\mathrm{AgeViaAlm}_l,\mathrm{vl}_l} = 0, \quad \rho^{\mathrm{cons}}_{\mathrm{AgeViaAlm}_l,\mathrm{vbuf}_l} = -1, \quad \rho^{\mathrm{prod}}_{\mathrm{AgeViaAlm}_l,\mathrm{va}_l} = \rho^{\mathrm{prod}}_{\mathrm{AgeDirect}_l,\mathrm{va}_l}$$
+$$\rho^{\mathrm{cons}}_{\mathrm{AgeViaStg}_l,\mathrm{vl}_l} = 0, \quad \rho^{\mathrm{cons}}_{\mathrm{AgeViaStg}_l,\mathrm{vbuf}_l} = -1, \quad \rho^{\mathrm{prod}}_{\mathrm{AgeViaStg}_l,\mathrm{va}_l} = \rho^{\mathrm{prod}}_{\mathrm{AgeDirect}_l,\mathrm{va}_l}$$
 
-**tc1 skips for alm lines.** The one-to-one coupling (A13a) is intentionally omitted for the following step pairs on alm lines, as the state types and the Alm-specific coupling above handle ordering:
+**tc1 skips for stg lines.** The one-to-one coupling (A13a) is intentionally omitted for the following step pairs on stg lines, as the state types and the Stg-specific coupling above handle ordering:
 
 | Skipped pair                              | Reason                                                  |
 |-------------------------------------------|---------------------------------------------------------|
-| $\mathrm{Fl}_l \to \mathrm{Alm}_l$        | Alm is optional                                         |
-| $\mathrm{Alm}_l \to \mathrm{AgeDirect}_l$ | Direct path is independent of Alm                       |
+| $\mathrm{Fl}_l \to \mathrm{Stg}_l$        | Stg is optional                                         |
+| $\mathrm{Stg}_l \to \mathrm{AgeDirect}_l$ | Direct path is independent of Stg                       |
 | $\mathrm{AgeDirect}_l \to \mathrm{Cs}_l$  | NIS on $\mathrm{va}_l$ enforces ordering for both paths |
-| $\mathrm{AgeViaAlm}_l \to \mathrm{Cs}_l$  | Same: NIS on $\mathrm{va}_l$                            |
+| $\mathrm{AgeViaStg}_l \to \mathrm{Cs}_l$  | Same: NIS on $\mathrm{va}_l$                            |
 
-**Updated aging throughput link (`A18_aging_link`).** For lines with Alm, both aging tasks contribute to final production:
+**Updated aging throughput link (`A18_aging_link`).** For lines with Stg, both aging tasks contribute to final production:
 
-$$\mathrm{FinalProd}_s \le \sum_{t \in \{\mathrm{AgeDirect}_s,\mathrm{AgeViaAlm}_s\}} \sum_{n \in N} b_{t,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \in L^{\mathrm{alm}}$$
+$$\mathrm{FinalProd}_s \le \sum_{t \in \{\mathrm{AgeDirect}_s,\mathrm{AgeViaStg}_s\}} \sum_{n \in N} b_{t,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \in L^{\mathrm{stg}}$$
 
-For lines without Alm the original single-task bound applies unchanged.
+For lines without Stg the original single-task bound applies unchanged.
 
 #### Static Preprocessing (Event-Range Fixing)
 
 In an event-based formulation with $N$ events and a production line of $K$ ordered steps, the $k$-th task can only be feasibly scheduled at events $k$ through $N-(K-k)$. Tasks outside this window are provably inactive and their disjunct indicators are fixed to 0 before the solve:
 
 $$ W_{i_k,n} = 0 \quad \forall\, n < k \;\text{ or }\; n > N-(K-k) $$
+
+#### Batch and Duration Linking
+
+Two constraint groups that the makespan GDP model leaves inside the task disjunction are lifted out into global linear constraints keyed on the activation binary $W_{i,n}$. The motivation is that `gdp.hull` blows up on this model (the disjuncts share many continuous variables,  $\mathrm{Ts}, \mathrm{Tf}, b, b_{i,j,n}, \mathrm{Tsj}, \mathrm{Tfj}$, over wide ranges, and the active disjunct nests a second unit-selection layer), so the model is solved with `gdp.bigm` and the relaxation is strengthened manually instead.
+
+**Batch on/off link (`b_on_off`).** A direct link tying the batch to activation:
+
+$$ b_{i,n} \le \bar{B}_i \, W_{i,n} \quad \forall i \in I,\ n \in N $$
+
+where $\bar{B}_i$ is the per-task batch upper bound (the sum of the $j^i_{\mathrm{max}}$ largest compatible-unit capacities, capped by any product upper bound; for pool tasks $\bar{B}_i = \bar{n}_{\mathrm{pool}} \cdot B_{\mathrm{pool}}$). This also ties the pool tasks (barrique/jar/ecobulk) directly to $W$, so fractional $W$ can no longer carry batch for free.
+
+**Global duration link (`duration_proc`, `duration_stor_lb/ub`).**
+
+Processing tasks ($i \notin I^{\mathrm{stg}}$):
+
+$$ \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} + \beta_i b_{i,n} $$
+
+Storage / holding tasks ($i \in I^{\mathrm{stg}}$, variable duration):
+
+$$ \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} \;\le\; \mathrm{Tf}_{i,n} \;\le\; \mathrm{Ts}_{i,n} + D^{\max}_i W_{i,n}, \qquad D^{\max}_i = \mathrm{LF}_i - \mathrm{ES}_i $$
 
 #### Remaining Economic Constraints
 
@@ -661,13 +682,13 @@ Final produced quantity is linked to last-event inventory and production (A18):
 $$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho^{\mathrm{prod}}_{i,s} \, b_{i,N} = \mathrm{FinalProd}_s \quad \forall s \in S^{\mathrm{P}} $$
 
 **Aging throughput link (`A18_aging_link`):**
-For products that have an aging step, all in-house production must pass through it. The total aging batch across all events upper-bounds $\mathrm{FinalProd}_s$. For lines without Alm (single aging task):
+For products that have an aging step, all in-house production must pass through it. The total aging batch across all events upper-bounds $\mathrm{FinalProd}_s$. For lines without Stg (single aging task):
 
-$$ \mathrm{FinalProd}_s \le \sum_{n \in N} b_{\mathrm{AgeDirect}_s,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \notin L^{\mathrm{alm}} $$
+$$ \mathrm{FinalProd}_s \le \sum_{n \in N} b_{\mathrm{AgeDirect}_s,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \notin L^{\mathrm{stg}} $$
 
-For lines with Alm, both the direct and Alm-path aging variants contribute:
+For lines with Stg, both the direct and Stg-path aging variants contribute:
 
-$$ \mathrm{FinalProd}_s \le \sum_{t \in \{\mathrm{AgeDirect}_s,\mathrm{AgeViaAlm}_s\}} \sum_{n \in N} b_{t,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \in L^{\mathrm{alm}} $$
+$$ \mathrm{FinalProd}_s \le \sum_{t \in \{\mathrm{AgeDirect}_s,\mathrm{AgeViaStg}_s\}} \sum_{n \in N} b_{t,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \in L^{\mathrm{stg}} $$
 
 **Per-product lateness (`LateDefByProduct`):**
 Products with an aging stage are exempt from the lateness penalty entirely. Their delivery date is considered flexible because the aging duration is inherent to the product and not under the scheduler's control.
@@ -730,7 +751,7 @@ $$ \mathrm{CoolingCost} = c^{\mathrm{cool}} \sum_{\substack{(i,j) \in \mathrm{IJ
 
 This is equivalent to the McCormick envelope of $\alpha_i \, b_{i,j,n} \, W_{i,n}$ but adds zero auxiliary variables and zero structural constraints, tightening the LP relaxation.
 
-Storage cooling associated with $\mathrm{Alm}$ tasks ($i \in I^{\mathrm{st}}$) is intentionally excluded from the objective in the current formulation.
+Storage cooling associated with $\mathrm{Stg}$ tasks ($i \in I^{\mathrm{st}}$) is intentionally excluded from the objective in the current formulation.
 
 **Degeneracy-breaking penalty.** A small $\varepsilon$ term pulls all task start times as early as possible, breaking the degeneracy of floating tasks (tasks that can shift freely within a feasible window without changing the economic objective):
 
@@ -802,7 +823,6 @@ Three pruning rules are applied to this index set before constructing the sequen
 | $n_1 = n_2$                                                                            | Within-event capacity bound $\sum_i \mathrm{NumBarr}_{i,n} \le \bar{n}_{\mathrm{bar}}$ already enforces non-overlap at this event     |
 | $i_1 = i_2$                                                                            | Same-task event chain $g06$ ($\mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i,n}$) forces strict temporal ordering, so no concurrent occupancy |
 | $\mathrm{LF}_{i_1} \le \mathrm{ES}_{i_2}$ or $\mathrm{LF}_{i_2} \le \mathrm{ES}_{i_1}$ | One direction of ordering is already forced by the time-window bounds, so the pair cannot overlap                                     |
-
 
 For each remaining pair, two sequencing binaries encode the temporal ordering:
 
