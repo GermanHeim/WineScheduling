@@ -1538,12 +1538,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             d_inactive = inactive_disjuncts[i, n]
 
             add_constr(d_inactive, "b_zero", model.b[i, n] == 0)
-            # Symmetry breaking: collapse idle event to previous event time.
-            # Prevents Ts[i,n] floating freely in [0, H] when nothing happens.
-            if n > 1:
-                add_constr(
-                    d_inactive, "ts_collapse", model.Ts[i, n] == model.Tf[i, n - 1]
-                )
 
             # y_zero / bj_zero only needed for non-pool tasks
             if compatible_units:
@@ -1569,8 +1563,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     #   active, Tf = Ts when idle. Dmax = task time-window width.
     proc_tasks = [i for i in model.i if i not in model.iStgInt]
     stor_tasks = list(model.iStgInt)
-    duration_Dmax = {
-        i: max(0.0, task_LF.get(i, H_val) - task_ES.get(i, 0.0)) for i in stor_tasks
+    # Per-task time-window width Dmax = LF - ES
+    task_Dmax = {
+        i: max(0.0, task_LF.get(i, H_val) - task_ES.get(i, 0.0)) for i in model.i
     }
 
     model.duration_proc = pyo.Constraint(
@@ -1591,8 +1586,18 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         stor_tasks,
         model.n,
         rule=lambda m, i, n: m.Tf[i, n]
-        <= m.Ts[i, n]
-        + duration_Dmax[i] * active_disjuncts[i, n].binary_indicator_var,
+        <= m.Ts[i, n] + task_Dmax[i] * active_disjuncts[i, n].binary_indicator_var,
+    )
+
+    # Idle-collapse (symmetry break), globalized with tight M = window width.
+    # g06 already gives Ts[i,n] >= Tf[i,n-1]. This caps it from above:
+    #   W=0 -> Ts[i,n] = Tf[i,n-1] (collapse idle event onto previous finish)
+    #   W=1 -> relaxed by Dmax_i   (active task may start after the previous finish)
+    model.idle_collapse = pyo.Constraint(
+        model.i,
+        [n for n in model.n if n > 1],
+        rule=lambda m, i, n: m.Ts[i, n]
+        <= m.Tf[i, n - 1] + task_Dmax[i] * active_disjuncts[i, n].binary_indicator_var,
     )
 
     # A03: At most one task per unit per event (non-pool units only)
