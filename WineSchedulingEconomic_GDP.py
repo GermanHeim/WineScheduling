@@ -1502,21 +1502,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             # Retrieve pre-created disjuncts, binary_indicator_var IS W_{i,n}
             d_active = active_disjuncts[i, n]
 
-            if i in model.iAlmInt:
-                # Variable duration for storage (Alm)
-                # solver chooses Tf freely, minimum = Ts + alpha
-                add_constr(
-                    d_active,
-                    "duration",
-                    model.Tf[i, n] >= model.Ts[i, n] + model.alpha[i],
-                )
-            else:
-                add_constr(
-                    d_active,
-                    "duration",
-                    model.Tf[i, n]
-                    == model.Ts[i, n] + model.alpha[i] + model.beta[i] * model.b[i, n],
-                )
+            if not compatible_units:
+                add_constr(d_active, "nonempty", model.b[i, n] >= 0)
 
             # Nested unit selection: ⋁_{j in J_i}, skipped for pool tasks
             for j in compatible_units:
@@ -1551,7 +1538,6 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             d_inactive = inactive_disjuncts[i, n]
 
             add_constr(d_inactive, "b_zero", model.b[i, n] == 0)
-            add_constr(d_inactive, "duration", model.Tf[i, n] == model.Ts[i, n])
             # Symmetry breaking: collapse idle event to previous event time.
             # Prevents Ts[i,n] floating freely in [0, H] when nothing happens.
             if n > 1:
@@ -1572,6 +1558,42 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                 f"Disj_Task_{i}_{n}",
                 gdp.Disjunction(expr=[d_active, d_inactive]),
             )
+
+    # ========================================
+    # GLOBAL DURATION LINK (replaces per-disjunct duration; no M=H Big-M)
+    # ========================================
+    # Processing tasks (incl. pool): Tf = Ts + alpha*W + beta*b.
+    #   W=1 -> Tf = Ts + alpha + beta*b (active duration)
+    #   W=0 -> b=0 (b_zero / b_on_off) -> Tf = Ts (idle collapse)
+    # Storage tasks (iStgInt, variable duration): Ts+alpha <= Tf <= Ts+Dmax when
+    #   active, Tf = Ts when idle. Dmax = task time-window width.
+    proc_tasks = [i for i in model.i if i not in model.iStgInt]
+    stor_tasks = list(model.iStgInt)
+    duration_Dmax = {
+        i: max(0.0, task_LF.get(i, H_val) - task_ES.get(i, 0.0)) for i in stor_tasks
+    }
+
+    model.duration_proc = pyo.Constraint(
+        proc_tasks,
+        model.n,
+        rule=lambda m, i, n: m.Tf[i, n]
+        == m.Ts[i, n]
+        + m.alpha[i] * active_disjuncts[i, n].binary_indicator_var
+        + m.beta[i] * m.b[i, n],
+    )
+    model.duration_stor_lb = pyo.Constraint(
+        stor_tasks,
+        model.n,
+        rule=lambda m, i, n: m.Tf[i, n]
+        >= m.Ts[i, n] + m.alpha[i] * active_disjuncts[i, n].binary_indicator_var,
+    )
+    model.duration_stor_ub = pyo.Constraint(
+        stor_tasks,
+        model.n,
+        rule=lambda m, i, n: m.Tf[i, n]
+        <= m.Ts[i, n]
+        + duration_Dmax[i] * active_disjuncts[i, n].binary_indicator_var,
+    )
 
     # A03: At most one task per unit per event (non-pool units only)
     j_with_tasks = [
