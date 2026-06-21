@@ -8,25 +8,25 @@
     H = 16000  # hours
 
     # Number of event points
-    n_max = 10
+    n_max = 14
 
     # Campaign deadlines (hours). One entry per young-wine campaign (iMaxYoungWine).
     # The k-th element is the deadline for the k-th campaign.
-    deadlines = [1260, 8600, 12920]  # D1=52.5 d, D2=358 d, D3=538 d
+    deadlines = [1260, 5600, 8920, 11920, 12920]  # D1=52.5 d, D2=358 d, D3=538 d
     penaltyLate = 5 # Penalty for being late ($/hour delayed past deadline)
 
     # Technical penalty weights for profit optimization (all in USD)
-    penaltyMS = 0.05              # Penalty per hour of makespan
+    penaltyMS = 0.5              # Penalty per hour of makespan
     costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
     grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
     penaltyDiscard = 5.0          # Cost per liter discarded (approx. raw material + basic processing cost)
-    almHoldingCost = 1e-3         # Cost per liter of wine stored
+    stgHoldingCost = 1e-3         # Cost per liter of wine stored
 
     # Activation/unit assignment limits
-    iMax = 1
+    iMax = 2
     # Max activations for young wine tasks.
     # Set to 2 to model two production cycles of young wines from the same line within a single schedule.
-    iMaxYoungWine = 3
+    iMaxYoungWine = 5
     jMax = 1
     jMin = 1
     iMaxST = 1
@@ -122,8 +122,8 @@
 #
 # 'ST0': Initial Stock at Time = 0
 [initial_inventory]
-    s_red = 65000
-    s_white_rose = 180000
+    s_red = 655000
+    s_white_rose = 2000000
 
 # 3b. Raw Material Cost (USD/L)
 #
@@ -139,8 +139,8 @@
 # This is equivalent to adding an explicit constraint,
 # but implemented as a variable bound, which is tighter and better for MIP performance.
 [product_ub]
-    Red1 = 8000
-    Red2 = 8000
+    Red1 = 15000
+    Red2 = 15000
     Red3 = 7500
     Red4 = 9000
     Red5 = 7000
@@ -161,29 +161,29 @@
 #        Cs = cold stabilization
 #        AgeBarXM = barrel aging X months
 #        AgeJarXM = jar aging X months
-#        Alm = long-term storage
+#        Stg = long-term storage
 # ecobulk: (optional, default false)
 #          true -> product is stored in ecobulk-type tanks (subject to A16/A17)
 #          false -> no ecobulk constraint
 [lines.1]
 product = "Red1"
-steps = ["Fa", "Fl", "Alm", "AgeBar4M", "Cs"]
+steps = ["Fa", "Fl", "Stg", "AgeBar4M", "Cs"]
 
 [lines.2]
 product = "Red2"
-steps = ["Fa", "Fl", "Alm", "AgeBar9M", "Cs"]
+steps = ["Fa", "Fl", "Stg", "AgeBar9M", "Cs"]
 
 [lines.3]
 product = "Red3"
-steps = ["Fa", "Fl", "Alm", "AgeBar11M", "Cs"]
+steps = ["Fa", "Fl", "Stg", "AgeBar11M", "Cs"]
 
 [lines.4]
 product = "Red4"
-steps = ["Fa", "Fl", "Alm", "AgeBar15M", "Cs"]
+steps = ["Fa", "Fl", "Stg", "AgeBar15M", "Cs"]
 
 [lines.5]
 product = "Red5"
-steps = ["Fa", "Fl", "Alm", "AgeJar4M", "Cs"]
+steps = ["Fa", "Fl", "Stg", "AgeJar4M", "Cs"]
 
 [lines.6]
 product = "Rose1"
@@ -191,7 +191,7 @@ steps = ["Pr", "Fa", "Cs"]
 
 [lines.7]
 product = "Rose2"
-steps = ["Pr", "Fa", "Alm", "AgeJar1M", "Cs"]
+steps = ["Pr", "Fa", "Stg", "AgeJar1M", "Cs"]
 
 [lines.8]
 product = "White1"
@@ -199,11 +199,11 @@ steps = ["Pr", "Fa", "Cs"]
 
 [lines.9]
 product = "White2"
-steps = ["Pr", "Fa", "Alm", "AgeJar1M", "Cs"]
+steps = ["Pr", "Fa", "Stg", "AgeJar1M", "Cs"]
 
 [lines.10]
 product = "White3"
-steps = ["Pr", "Fa", "Fl", "Alm", "AgeBar2M", "Cs"]
+steps = ["Pr", "Fa", "Fl", "Stg", "AgeBar2M", "Cs"]
 
 # 6. Tasks Templates
 #
@@ -242,7 +242,7 @@ steps = ["Pr", "Fa", "Fl", "Alm", "AgeBar2M", "Cs"]
         "inox_int_17000"
     ]
 
-[templates.Alm]
+[templates.Stg]
     alpha = 48.0
     beta = 0.0
     compatible_units = [
@@ -453,7 +453,7 @@ steps = ["Pr", "Fa", "Fl", "Alm", "AgeBar2M", "Cs"]
 # Centralized unit definitions.
 # - quantity:  number of physically available units of that type
 # - exterior:  true -> incurs cooling cost (costCooling per Lh)
-# - ecobulk:   true -> Alm limited to 720 h (1 month) by model constraint A_eco_alm_max
+# - ecobulk:   true -> Stg limited to 720 h (1 month) by model constraint A_eco_stg_max
 # - task_bounds.<Task>: [Bmin, Bmax] for range, or scalar B for fixed-capacity (Bmin = Bmax = B)
 [units.press]
     quantity = 1
@@ -486,27 +486,27 @@ steps = ["Pr", "Fa", "Fl", "Alm", "AgeBar2M", "Cs"]
 
 [units.inox_int_17000]
     quantity = 1
-    task_bounds = {Fa = 17000, Fl = 17000, Cs = 17000, Alm = 17000}
+    task_bounds = {Fa = 17000, Fl = 17000, Cs = 17000, Stg = 17000}
 
 [units.subte_6200]
     quantity = 1
-    task_bounds = {Fl = 6200, Alm = 6200}
+    task_bounds = {Fl = 6200, Stg = 6200}
 
 [units.subte_10500]
     quantity = 1
-    task_bounds = {Fl = 10500, Alm = 10500}
+    task_bounds = {Fl = 10500, Stg = 10500}
 
 [units.subte_9500]
     quantity = 1
-    task_bounds = {Fl = 9500, Alm = 9500}
+    task_bounds = {Fl = 9500, Stg = 9500}
 
 [units.subte_15000]
     quantity = 1
-    task_bounds = {Fl = 15000, Alm = 15000}
+    task_bounds = {Fl = 15000, Stg = 15000}
 
 [units.subte_9000]
     quantity = 1
-    task_bounds = {Fl = 9000, Alm = 9000}
+    task_bounds = {Fl = 9000, Stg = 9000}
 
 [units.inox_int_1000v]
     quantity = 6
@@ -527,12 +527,12 @@ steps = ["Pr", "Fa", "Fl", "Alm", "AgeBar2M", "Cs"]
 [units.ecobulk_1100]
     quantity = 10
     ecobulk = true
-    task_bounds = {Alm = 1100}
+    task_bounds = {Stg = 1100}
 
 [units.ecobulk_650]
     quantity = 1
     ecobulk = true
-    task_bounds = {Alm = 650}
+    task_bounds = {Stg = 650}
 
 [units.barrique]
     quantity = 85
