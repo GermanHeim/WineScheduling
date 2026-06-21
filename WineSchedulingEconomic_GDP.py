@@ -1367,6 +1367,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     )
 
     # Ecobulk Stg max duration: 720 h (1 month). Big-M relaxed when y[i,j,n]=0.
+    # Tight M = Dmax_i - 720 (Dmax_i = LF_i - ES_i): an active Stg task's duration
+    # never exceeds Dmax_i (duration_stor_ub), so 720 + M = Dmax_i is non-binding
+    # at y=0.
     all_stg = list(model.iStgInt)
     eco_stg_index = [
         (i, j, n)
@@ -1375,10 +1378,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         for n in model.n
         if (i, j) in model.ij_nonpool
     ]
+    eco_M = {
+        i: max(0.0, task_LF.get(i, H_val) - task_ES.get(i, 0.0) - 720.0)
+        for i in all_stg
+    }
     model.A_eco_stg_max = pyo.Constraint(
         eco_stg_index,
         rule=lambda m, i, j, n: m.Tf[i, n] - m.Ts[i, n]
-        <= 720 + pyo.value(m.H) * (1 - m.y[i, j, n]),
+        <= 720 + eco_M[i] * (1 - m.y[i, j, n]),
     )
 
     # Ends
