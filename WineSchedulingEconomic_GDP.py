@@ -1858,6 +1858,36 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         "linking constraints."
     )
 
+    # Identical-unit symmetry breaking (valid global-count form).
+    # Instances of a multi-quantity unit are interchangeable, so order them by
+    # TOTAL usage over the whole schedule: sum_{i,n} y[i,u_{m+1},n] <= sum_{i,n}
+    # y[i,u_m,n].
+    ij_np_set = set(model.ij_nonpool)
+    tasks_on_unit = {}
+    for unit_inst in model.j:
+        ts = [i for i in model.i if (i, unit_inst) in ij_np_set]
+        if ts:
+            tasks_on_unit[unit_inst] = ts
+
+    sym_pairs = []
+    for insts in unit_instances_by_base.values():
+        used = [u for u in insts if u in tasks_on_unit]
+        for m in range(len(used) - 1):
+            sym_pairs.append((used[m], used[m + 1]))
+
+    if sym_pairs:
+
+        def _unit_usage(u):
+            return sum(model.y[i, u, n] for i in tasks_on_unit[u] for n in model.n)
+
+        model.sym_break = pyo.ConstraintList()
+        for u_lo, u_hi in sym_pairs:
+            model.sym_break.add(_unit_usage(u_hi) <= _unit_usage(u_lo))
+        print(
+            f"  [sym_break] Added {len(sym_pairs)} identical-unit usage-ordering "
+            f"cuts across {len({u for p in sym_pairs for u in p})} instances."
+        )
+
     # Stash for solver-side branching priority assignment.
     model._active_disjuncts = active_disjuncts
 
