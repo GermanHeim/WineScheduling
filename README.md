@@ -599,7 +599,7 @@ $$\mathrm{MS} \ge \max_{l \in L} \sum_{k \in \text{steps}(l)} \alpha_k$$
 
 Ecobulk tanks must not hold wine for more than 720 hours (1 month). For each Ecobulk-compatible Stg task $i \in I^{\mathrm{stg}}$ assigned to Ecobulk unit $j$:
 
-$$\mathrm{Tf}_{i,n} - \mathrm{Ts}_{i,n} \le 720 + H(1 - y_{i,j,n})$$
+$$\mathrm{Tf}_{i,n} - \mathrm{Ts}_{i,n} \le 720 + \max(0,\, D^{\max}_i - 720)\,(1 - y_{i,j,n})$$
 
 #### Two-Path Intermediate Stg Storage
 
