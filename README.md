@@ -1,6 +1,7 @@
 # Wine Scheduling Model
 
 ## Table of Contents
+
 - [Wine Scheduling Model](#wine-scheduling-model)
   - [Table of Contents](#table-of-contents)
   - [Makespan minimization](#makespan-minimization)
@@ -62,7 +63,7 @@ The objective minimizes the makespan while steering storage usage.
 - $J$: Set of units (index $j$) (tanks, reactors, storage vessels)
 - $N$: Set of event points (index $n$) (impose an order: event n happens before n+1)
 - $S$: Set of states (index $s$) (materials: must, wine, intermediates, final products)
-  
+
 Special subsets encode operational rules:
 
 - $I^{\mathrm{st}} \subset I$: Storage tasks
@@ -115,13 +116,13 @@ Activation and unit-assignment limits:
 
 **Initial Event ($n=1$) (h04):**
 
-$$ \mathrm{ST}_{s,1} = \mathrm{ST}_{s,0} + \sum_{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b_{i,1} $$
+$$ \mathrm{ST}_{s,1} = \mathrm{ST}_{s,0} + \sum*{i \in \mathrm{ICS}\_s} \rho*{i,s}^{\mathrm{cons}} b\_{i,1} $$
 
 Inventory starts from an initial stock and subtracts what is consumed at event 1.
 
 **Subsequent Events ($n > 1$) (h03):**
 
-$$ \mathrm{ST}_{s,n} = \mathrm{ST}_{s,n-1} + \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b_{i,n-1} + \sum_{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b_{i,n} $$
+$$ \mathrm{ST}_{s,n} = \mathrm{ST}_{s,n-1} + \sum*{i \in \mathrm{IPS}\_s} \rho*{i,s}^{\mathrm{prod}} b*{i,n-1} + \sum*{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b\_{i,n} $$
 
 Inventory evolves as:
 
@@ -134,7 +135,7 @@ Inventory evolves as:
 **Processing Time (h05):**
 For non-storage tasks ($i \in I^{\mathrm{nst}}$):
 
-$$ \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} + \beta_i b_{i,n} $$
+$$ \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha*i W*{i,n} + \beta*i b*{i,n} $$
 
 - `duration = fixed time + batch-dependent time`
 - multiplied by activation `W`
@@ -150,7 +151,7 @@ This creates a natural temporal chain across events.
 **Task Precedence (g11):**
 If task $i$ consumes what task $i'$ produces:
 
-$$ \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} - H(1 - W_{i',n}) $$
+$$ \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} - H(1 - W\_{i',n}) $$
 
 - `i` at `n+1` must start after `i′` at `n` finishes
 - Big-M deactivates the constraint when tasks are inactive
@@ -158,14 +159,14 @@ $$ \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} - H(1 - W_{i',n}) $$
 **Zero Wait (ZW) Constraint (g12):**
 For states $s \in S^{\mathrm{ZW}}$, if $i$ consumes $s$ from $i'$:
 
-$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
+$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + H(2 - W*{i',n} - W*{i,n+1}) $$
 
 Zero-wait: consumption must start exactly when production ends
 
 **No Intermediate Storage (NIS) Constraint (g13):**
 For states $s \in S^{\mathrm{NIS}}$, if $i$ consumes $s$ from $i'$:
 
-$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + H(2 - W_{i',n} - W_{i,n+1}) $$
+$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + H(2 - W*{i',n} - W*{i,n+1}) $$
 
 No-intermediate-storage: material cannot sit in inventory
 
@@ -183,19 +184,19 @@ This supports parallel units (e.g. multiple tanks for one blend).
 
 **Unit Capacity / Load (h09):**
 
-$$ \sum_{i \in I^{\mathrm{nst}}} \sum_{n} (\alpha_i y_{i,j,n} + \beta_i b_{i,j,n}) \le MS $$
+$$ \sum*{i \in I^{\mathrm{nst}}} \sum*{n} (\alpha*i y*{i,j,n} + \beta*i b*{i,j,n}) \le MS $$
 
 **Max Units per Task (A01, A01st):**
 
-$$ \sum_{j \in J_i} y_{i,j,n} \le j_{\mathrm{max}} \cdot W_{i,n} $$
+$$ \sum*{j \in J_i} y*{i,j,n} \le j*{\mathrm{max}} \cdot W*{i,n} $$
 
 **Min Units per Task (A02, A02st):**
 
-$$ \sum_{j \in J_i} y_{i,j,n} \ge j_{\mathrm{min}} \cdot W_{i,n} $$
+$$ \sum*{j \in J_i} y*{i,j,n} \ge j*{\mathrm{min}} \cdot W*{i,n} $$
 
 **Single Task per Unit (A03):**
 
-$$ \sum_{i \in I_j} y_{i,j,n} \le 1 $$
+$$ \sum*{i \in I_j} y*{i,j,n} \le 1 $$
 
 Each unit can handle at most one task per event.
 
@@ -209,26 +210,26 @@ where $n_{\mathrm{press}}$ is the number of pressing lines and $K_{\mathrm{min}}
 
 **Batch Aggregation (A04):**
 
-$$ b_{i,n} = \sum_{j \in J_i} b_{i,j,n} $$
+$$ b*{i,n} = \sum*{j \in J*i} b*{i,j,n} $$
 
 Total batch size equals the sum over assigned units.
 
 **Batch Limits (A05a, A05b):**
 
-$$ B_{i,j}^{\mathrm{min}} y_{i,j,n} \le b_{i,j,n} \le B_{i,j}^{\mathrm{max}} y_{i,j,n} $$
+$$ B*{i,j}^{\mathrm{min}} y*{i,j,n} \le b*{i,j,n} \le B*{i,j}^{\mathrm{max}} y\_{i,j,n} $$
 
 If a unit is used, batch size must lie between min and max.
 If it is not used, batch size is forced to zero.
 
 **Fixed-capacity tightening.** When $B_{i,j}^{\mathrm{min}} = B_{i,j}^{\mathrm{max}} = B$ (most subterranean tanks, barriques, jars, ecobulks), the two inequalities collapse to one equality inside the assign disjunct:
 
-$$ b_{i,j,n} = B \cdot y_{i,j,n} $$
+$$ b*{i,j,n} = B \cdot y*{i,j,n} $$
 
 ### 5. Operational Constraints
 
 **Max Activations - Non-storage tasks (A06):**
 
-$$ \sum_{n} W_{i,n} \le \mathrm{task}_{i_{\mathrm{max},i}} \quad \forall i \in I^{\mathrm{nst}} $$
+$$ \sum*{n} W*{i,n} \le \mathrm{task}_{i_{\mathrm{max},i}} \quad \forall i \in I^{\mathrm{nst}} $$
 
 Limits how many times a non-storage task can occur. For most tasks $\mathrm{task}_{i_{\mathrm{max},i}} = i_{\mathrm{max}} = 1$ (one fermentation per batch). The shared pressing task uses the tighter bound $\mathrm{task}_{i_{\mathrm{max},\mathrm{Pr}}} = \min(n_{\mathrm{press}},\ n_{\mathrm{max}}-(K_{\mathrm{min}}-1))$ as described above.
 
@@ -236,13 +237,13 @@ Limits how many times a non-storage task can occur. For most tasks $\mathrm{task
 
 In the makespan models all demand must be met in-house (no outsourcing), so the total must produced by the press must equal at least the sum of each pressing line's demand divided by its chain yield from must to final product:
 
-$$ \sum_{n} W_{\mathrm{Pr},n} \ge \left\lceil \frac{\displaystyle\sum_{l \in L_{\mathrm{press}}} D_{s_l}\,/\,\eta_l}{\max_j B^{\mathrm{max}}_{\mathrm{Pr},j} \cdot \rho^{\mathrm{prod}}_{\mathrm{Pr},m}} \right\rceil $$
+$$ \sum*{n} W*{\mathrm{Pr},n} \ge \left\lceil \frac{\displaystyle\sum*{l \in L*{\mathrm{press}}} D*{s_l}\,/\,\eta_l}{\max_j B^{\mathrm{max}}*{\mathrm{Pr},j} \cdot \rho^{\mathrm{prod}}\_{\mathrm{Pr},m}} \right\rceil $$
 
 where $\eta_l = \prod_k \rho^{\mathrm{prod}}_k$ is the chain yield from must to final product along line $l$ and $\rho^{\mathrm{prod}}_{\mathrm{Pr},m}$ is the must yield of the press.
 
 **Storage enable - Storage tasks (A06st):**
 
-$$ W_{i,N} \le i_{\mathrm{max,ST}} \quad \forall i \in I^{\mathrm{st}} $$
+$$ W*{i,N} \le i*{\mathrm{max,ST}} \quad \forall i \in I^{\mathrm{st}} $$
 
 With the persistence chain (A14, see below), $W_{i,n}$ is non-decreasing, so $W_{i,N}$ is 0/1 = whether the task ever started. This is why $i_{\mathrm{max,ST}} \in \{0,1\}$ acts as a global switch: storage permitted when 1 (constraint trivial), forbidden when 0 (forces $W_{i,N}=0$).
 
@@ -282,30 +283,30 @@ $$ \mathrm{Tfj}_{j,n} \ge \mathrm{Tsj}_{j,n} $$
 
 **Sync Start Times (A11a, A11b):**
 
-$$ \mathrm{Tsj}_{j,n} \le \mathrm{Ts}_{i,n} + H(1 - y_{i,j,n}) $$
+$$ \mathrm{Tsj}_{j,n} \le \mathrm{Ts}_{i,n} + H(1 - y\_{i,j,n}) $$
 
-$$ \mathrm{Tsj}_{j,n} \ge \mathrm{Ts}_{i,n} - H(1 - y_{i,j,n}) $$
+$$ \mathrm{Tsj}_{j,n} \ge \mathrm{Ts}_{i,n} - H(1 - y\_{i,j,n}) $$
 
 **Sync End Times (A12a, A12b):**
 
-$$ \mathrm{Tfj}_{j,n} \le \mathrm{Tf}_{i,n} + H(1 - y_{i,j,n}) $$
+$$ \mathrm{Tfj}_{j,n} \le \mathrm{Tf}_{i,n} + H(1 - y\_{i,j,n}) $$
 
-$$ \mathrm{Tfj}_{j,n} \ge \mathrm{Tf}_{i,n} - H(1 - y_{i,j,n}) $$
+$$ \mathrm{Tfj}_{j,n} \ge \mathrm{Tf}_{i,n} - H(1 - y\_{i,j,n}) $$
 
 ### 7. Special Constraints
 
 **One-to-One Pairs (A13a):**
 
-$$ W_{i',n+1} = W_{i,n} $$
+$$ W*{i',n+1} = W*{i,n} $$
 
 For tightly coupled tasks (e.g. transfer immediately after fermentation), activation is forced to match across events.
 
 **Storage Persistence (A14, A15):**
 If storage task $i$ is active in $n$, it must remain active in $n+1$ (and by transitivity, all future events):
 
-$$ W_{i,n+1} \ge W_{i,n} \quad \forall n \in \{1 \dots N-1\}, i \in I^{\mathrm{st}} $$
+$$ W*{i,n+1} \ge W*{i,n} \quad \forall n \in \{1 \dots N-1\}, i \in I^{\mathrm{st}} $$
 
-$$ y_{i,j,n} \implies y_{i,j,n+1} \quad \forall n \in \{1 \dots N-1\}, (i,j) \in \mathrm{IJ}, i \in I^{\mathrm{st}} $$
+$$ y*{i,j,n} \implies y*{i,j,n+1} \quad \forall n \in \{1 \dots N-1\}, (i,j) \in \mathrm{IJ}, i \in I^{\mathrm{st}} $$
 
 Once a storage task starts:
 
@@ -317,7 +318,7 @@ This prevents emptying and reusing storage implicitly. The recursive chain is eq
 **Ecobulk Timing (A16):**
 For states $s \in S^{\mathrm{FISEco}}$ (Ecobulk compatible), if task $i$ consumes $s$ produced by task $i'$:
 
-$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + M(2 - W_{i',n} - W_{i,n+1}) $$
+$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + M(2 - W*{i',n} - W*{i,n+1}) $$
 
 This enforces a "no intermediate storage" condition for Ecobulk products. The consuming task must start immediately after the producing task finishes (or before, effectively zero-wait when combined with precedence).
 
@@ -325,25 +326,25 @@ This enforces a "no intermediate storage" condition for Ecobulk products. The co
 
 **Demand Satisfaction (g17):**
 
-$$ \mathrm{FinalProd}_s \ge D_s $$
+$$ \mathrm{FinalProd}\_s \ge D_s $$
 
 Final production must meet or exceed demand.
 
 **Final Production Calculation (A18):**
 
-$$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b_{i,N} = \mathrm{FinalProd}_s $$
+$$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b\_{i,N} = \mathrm{FinalProd}\_s $$
 
 Final inventory plus last-event production equals total produced.
 
 **Makespan (A21):**
 
-$$ \mathrm{Tf}_{i,N} \le \mathrm{MS} \quad \forall i \in I^{\mathrm{pst}} $$
+$$ \mathrm{Tf}\_{i,N} \le \mathrm{MS} \quad \forall i \in I^{\mathrm{pst}} $$
 
 The finish time of all pre-storage tasks must be ≤ MS.
 
 **Critical-path lower bound (`ms_lb`):** the makespan is bounded below by the longest production line's total fixed processing time:
 
-$$ \mathrm{MS} \ge \max_{l \in L} \sum_{i \in l} \alpha_i $$
+$$ \mathrm{MS} \ge \max*{l \in L} \sum*{i \in l} \alpha_i $$
 
 **Objective Function:**
 
@@ -351,13 +352,13 @@ $$ \min Z = \mathrm{MS} + \mathrm{Penalty}_{\mathrm{unused}} + \mathrm{Penalty}_
 
 Unused-storage term:
 
-$$ \mathrm{JST}_{\mathrm{unused}} = n_{\mathrm{JST}} - \sum_{j \in \mathrm{JST}}\sum_{\substack{i \in I^{\mathrm{st}}:\\(i,j)\in \mathrm{IJ}}} y_{i,j,N} $$
+$$ \mathrm{JST}_{\mathrm{unused}} = n_{\mathrm{JST}} - \sum*{j \in \mathrm{JST}}\sum*{\substack{i \in I^{\mathrm{st}}:\\(i,j)\in \mathrm{IJ}}} y\_{i,j,N} $$
 
 With storage persistence, this counts tanks that are inactive at the final event and is equivalent to tanks never used.
 
-$$ \mathrm{Penalty}_{\mathrm{unused}} = c^{\mathrm{empty}} \cdot \frac{1}{n_{\mathrm{JST}}} \cdot \mathrm{JST}_{\mathrm{unused}} $$
+$$ \mathrm{Penalty}_{\mathrm{unused}} = c^{\mathrm{empty}} \cdot \frac{1}{n_{\mathrm{JST}}} \cdot \mathrm{JST}\_{\mathrm{unused}} $$
 
-$$ \mathrm{Penalty}_{\mathrm{space}} = c^{\mathrm{air}} \cdot \frac{1}{\sum_{j\in \mathrm{JST}}(\Delta B)/n_{\mathrm{JST}}} \cdot \sum_{j\in \mathrm{JST}} \mathrm{Freespace}_j $$
+$$ \mathrm{Penalty}_{\mathrm{space}} = c^{\mathrm{air}} \cdot \frac{1}{\sum_{j\in \mathrm{JST}}(\Delta B)/n*{\mathrm{JST}}} \cdot \sum*{j\in \mathrm{JST}} \mathrm{Freespace}\_j $$
 
 Minimize makespan while trying to:
 
@@ -372,7 +373,8 @@ The reformulation in this model (`WineSchedulingMS_GDP.py`) uses Disjunctive Pro
 
 Task activation is an outer disjunction: when a task is active, a separate nested disjunction for each compatible unit $j \in J_i$ decides whether that unit is assigned (`assign` vs. `skip`). If the task is inactive, everything is zeroed out.
 
-$$\forall i \in I, n \in N:
+$$
+\forall i \in I, n \in N:
 \begin{bmatrix}
 W_{i,n} \\
 \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha_i + \beta_i b_{i,n} \quad (i \in I^{\mathrm{nst}}) \\
@@ -399,11 +401,12 @@ b_{i,n} = 0 \\
 y_{i,j,n} = 0 \\
 b_{i,j,n} = 0
 \end{bmatrix}
-\end{bmatrix}$$
+\end{bmatrix}
+$$
 
 A global constraint enforces at most one task per unit per event:
 
-$$ \sum_{i \in I_j} y_{i,j,n} \le 1 \quad \forall j, n $$
+$$ \sum*{i \in I_j} y*{i,j,n} \le 1 \quad \forall j, n $$
 
 **Symmetry breaking (inactive disjunct).** When a task is inactive at event $n > 1$, its start time is collapsed to the finish of the previous event:
 
@@ -429,19 +432,19 @@ $$M^\ge_{i',i} = \max(0,\ \mathrm{LF}_{i'} - \mathrm{ES}_i), \qquad M^\le_{i',i}
 
 **General Precedence (`prec_ge`):**
 
-$$ W_{i',n} \land W_{i,n+1} \implies \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} $$
+$$ W*{i',n} \land W*{i,n+1} \implies \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} $$
 
 Linearized as:
 
-$$ \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} - M^\ge_{i',i}(2 - W_{i',n} - W_{i,n+1}) $$
+$$ \mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i',n} - M^\ge*{i',i}(2 - W*{i',n} - W\_{i,n+1}) $$
 
 **Zero-Wait / No-Intermediate-Storage / Ecobulk (equality when both active):**
 
-$$ W_{i',n} \land W_{i,n+1} \implies \mathrm{Ts}_{i,n+1} = \mathrm{Tf}_{i',n} $$
+$$ W*{i',n} \land W*{i,n+1} \implies \mathrm{Ts}_{i,n+1} = \mathrm{Tf}_{i',n} $$
 
 Linearized as the $\ge$ above plus:
 
-$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + M^\le_{i',i}(2 - W_{i',n} - W_{i,n+1}) $$
+$$ \mathrm{Ts}_{i,n+1} \le \mathrm{Tf}_{i',n} + M^\le*{i',i}(2 - W*{i',n} - W\_{i,n+1}) $$
 
 Using $M_{i',i} \ll H$ for long-aging lines (up to 85% tighter than the global horizon) significantly strengthens the LP relaxation at the root node.
 
@@ -449,7 +452,7 @@ Using $M_{i',i} \ll H$ for long-aging lines (up to 85% tighter than the global h
 
 Persistence rules for storage tasks are expressed as pure logical implications on disjunct indicator variables, rather than algebraic inequality chains:
 
-$$ W_{i,n} \implies W_{i,n+1} \quad \forall i \in I^{\mathrm{st}}, n < N $$
+$$ W*{i,n} \implies W*{i,n+1} \quad \forall i \in I^{\mathrm{st}}, n < N $$
 
 This means once a storage task activates at event $n$, it must remain active for all subsequent events. The unit-level persistence ($y_{i,j,n} \implies y_{i,j,n+1}$) is retained as an algebraic constraint (A15).
 
@@ -459,21 +462,21 @@ These constraints remain algebraic as they involve aggregation across the entire
 
 **Material Balances:**
 
-$$ \mathrm{ST}_{s,n} = \mathrm{ST}_{s,n-1} + \sum \rho^{\mathrm{prod}} b_{n-1} + \sum \rho^{\mathrm{cons}} b_{n} $$
+$$ \mathrm{ST}_{s,n} = \mathrm{ST}_{s,n-1} + \sum \rho^{\mathrm{prod}} b*{n-1} + \sum \rho^{\mathrm{cons}} b*{n} $$
 
 **Batch Aggregation (A04):**
 
-$$ b_{i,n} = \sum_{j \in J_i} b_{i,j,n} $$
+$$ b*{i,n} = \sum*{j \in J*i} b*{i,j,n} $$
 
 **Global Capacity (A06 / A06_min_Pr):**
 
-$$ \sum_{n} W_{i,n} \le \mathrm{task}\_i_{\mathrm{max},i} $$
+$$ \sum*{n} W*{i,n} \le \mathrm{task}\_i\_{\mathrm{max},i} $$
 
 For the shared pressing task, $\mathrm{task}_{i_{\mathrm{max},\mathrm{Pr}}}$ is bounded above by $\min(n_{\mathrm{press}}, n_{\mathrm{max}}-(K_{\mathrm{min}}-1))$ and, in the makespan models, below by $\lceil \mathrm{TotalMust} / \mathrm{MaxMustPerRun} \rceil$.
 
 **Unit Constraints:**
 
-$$ \sum_{j \in J_i} y_{i,j,n} \le j_{\mathrm{max}} \cdot W_{i,n} $$
+$$ \sum*{j \in J_i} y*{i,j,n} \le j*{\mathrm{max}} \cdot W*{i,n} $$
 
 **Cover cuts (LP tightening).** After the disjunction structure is built, the following valid inequality is added for every non-pool task $(i, n)$:
 
@@ -545,23 +548,23 @@ The standard material balance (h03/h04) is extended with a `Discard` term on all
 
 **Initial event ($n=1$):**
 
-$$ \mathrm{ST}_{s,1} = \mathrm{ST}_{s,0} + \sum_{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b_{i,1} - \mathrm{Discard}_{s,1} \quad \forall s \in S^{\mathrm{I}} $$
+$$ \mathrm{ST}_{s,1} = \mathrm{ST}_{s,0} + \sum*{i \in \mathrm{ICS}\_s} \rho*{i,s}^{\mathrm{cons}} b*{i,1} - \mathrm{Discard}*{s,1} \quad \forall s \in S^{\mathrm{I}} $$
 
 **Subsequent events ($n > 1$):**
 
-$$ \mathrm{ST}_{s,n} = \mathrm{ST}_{s,n-1} + \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b_{i,n-1} + \sum_{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b_{i,n} - \mathrm{Discard}_{s,n} \quad \forall s \in S^{\mathrm{I}} $$
+$$ \mathrm{ST}_{s,n} = \mathrm{ST}_{s,n-1} + \sum*{i \in \mathrm{IPS}\_s} \rho*{i,s}^{\mathrm{prod}} b*{i,n-1} + \sum*{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b*{i,n} - \mathrm{Discard}*{s,n} \quad \forall s \in S^{\mathrm{I}} $$
 
 For raw-material pools ($s \in S^{\mathrm{R}}$) and final product states ($s \in S^{\mathrm{P}}$), the original balances without `Discard` are retained.
 
 **Effect on zero-wait / NIS states.** For states that enforce zero inventory ($\mathrm{ST}_{s,n}=0$ always), the balance collapses to:
 
-$$ \sum_{i \in \mathrm{ICS}_s} \rho_{i,s}^{\mathrm{cons}} b_{i,n} = \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b_{i,n-1} - \mathrm{Discard}_{s,n} $$
+$$ \sum*{i \in \mathrm{ICS}\_s} \rho*{i,s}^{\mathrm{cons}} b*{i,n} = \sum*{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b*{i,n-1} - \mathrm{Discard}*{s,n} $$
 
 Without `Discard`, the consuming batch is fully determined by the producing batch and the yield coefficients. With `Discard`, the constraint becomes $\le$. The consuming batch may be any fraction of the upstream volume and the excess is discarded. This allows the model to match fixed-capacity downstream vessels to variable upstream batches without infeasibility.
 
 **Terminal balance (h16).** Zero-wait states require that any production at the final event $N$ (which has no successor event for a consuming task) is also explicitly accounted for. The constraint is extended to allow discarding this stranded volume:
 
-$$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b_{i,N} - \mathrm{Discard}_{s,N} = 0 \quad \forall s \in S^{\mathrm{ZW}} $$
+$$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho_{i,s}^{\mathrm{prod}} b*{i,N} - \mathrm{Discard}*{s,N} = 0 \quad \forall s \in S^{\mathrm{ZW}} $$
 
 NIS states do not need an analogous terminal constraint: the NIS condition (`g13`) prevents any task producing into an NIS state from running at $N$ (it would require a consuming task at $N+1$ which does not exist), so production at the final event is always zero for these states.
 
@@ -569,7 +572,7 @@ NIS states do not need an analogous terminal constraint: the NIS condition (`g13
 
 Demand can be met by internal production plus outsourcing. For products with `OutsourceAllowed = 0`, the outsourcing term is blocked, so demand must be met entirely in-house:
 
-$$ \mathrm{FinalProd}_s + \mathrm{Outsource}_s \ge D_s \quad \forall s \in S^{\mathrm{Market}} $$
+$$ \mathrm{FinalProd}\_s + \mathrm{Outsource}\_s \ge D_s \quad \forall s \in S^{\mathrm{Market}} $$
 
 **Minimum-activation valid cuts (A06_min).** For each non-outsourceable line, the cut is applied to all non-press tasks in the line (not only the last task). For each such task $i$, at least $\lceil D_{s_l} / \bar{B}_i \rceil$ activations are required, where $\bar{B}_i$ is the maximum batch size achievable in a single activation:
 
@@ -638,7 +641,7 @@ $$\rho^{\mathrm{cons}}_{\mathrm{AgeViaStg}_l,\mathrm{vl}_l} = 0, \quad \rho^{\ma
 **tc1 skips for stg lines.** The one-to-one coupling (A13a) is intentionally omitted for the following step pairs on stg lines, as the state types and the Stg-specific coupling above handle ordering:
 
 | Skipped pair                              | Reason                                                  |
-|-------------------------------------------|---------------------------------------------------------|
+| ----------------------------------------- | ------------------------------------------------------- |
 | $\mathrm{Fl}_l \to \mathrm{Stg}_l$        | Stg is optional                                         |
 | $\mathrm{Stg}_l \to \mathrm{AgeDirect}_l$ | Direct path is independent of Stg                       |
 | $\mathrm{AgeDirect}_l \to \mathrm{Cs}_l$  | NIS on $\mathrm{va}_l$ enforces ordering for both paths |
@@ -654,15 +657,15 @@ For lines without Stg the original single-task bound applies unchanged.
 
 In an event-based formulation with $N$ events and a production line of $K$ ordered steps, the $k$-th task can only be feasibly scheduled at events $k$ through $N-(K-k)$. Tasks outside this window are provably inactive and their disjunct indicators are fixed to 0 before the solve:
 
-$$ W_{i_k,n} = 0 \quad \forall\, n < k \;\text{ or }\; n > N-(K-k) $$
+$$ W\_{i_k,n} = 0 \quad \forall\, n < k \;\text{ or }\; n > N-(K-k) $$
 
 #### Batch and Duration Linking
 
-Three constraint groups that the makespan GDP model leaves inside the task disjunction are lifted out into global linear constraints keyed on the activation binary $W_{i,n}$. The motivation is that `gdp.hull` blows up on this model (the disjuncts share many continuous variables,  $\mathrm{Ts}, \mathrm{Tf}, b, b_{i,j,n}, \mathrm{Tsj}, \mathrm{Tfj}$, over wide ranges, and the active disjunct nests a second unit-selection layer), so the model is solved with `gdp.bigm` and the relaxation is strengthened manually instead.
+Three constraint groups that the makespan GDP model leaves inside the task disjunction are lifted out into global linear constraints keyed on the activation binary $W_{i,n}$. The motivation is that `gdp.hull` blows up on this model (the disjuncts share many continuous variables, $\mathrm{Ts}, \mathrm{Tf}, b, b_{i,j,n}, \mathrm{Tsj}, \mathrm{Tfj}$, over wide ranges, and the active disjunct nests a second unit-selection layer), so the model is solved with `gdp.bigm` and the relaxation is strengthened manually instead.
 
 **Batch on/off link (`b_on_off`).** A direct link tying the batch to activation:
 
-$$ b_{i,n} \le \bar{B}_i \, W_{i,n} \quad \forall i \in I,\ n \in N $$
+$$ b*{i,n} \le \bar{B}\_i \, W*{i,n} \quad \forall i \in I,\ n \in N $$
 
 where $\bar{B}_i$ is the per-task batch upper bound (the sum of the $j^i_{\mathrm{max}}$ largest compatible-unit capacities, capped by any product upper bound; for pool tasks $\bar{B}_i = \bar{n}_{\mathrm{pool}} \cdot B_{\mathrm{pool}}$). This also ties the pool tasks (barrique/jar/ecobulk) directly to $W$, so fractional $W$ can no longer carry batch for free.
 
@@ -670,11 +673,11 @@ where $\bar{B}_i$ is the per-task batch upper bound (the sum of the $j^i_{\mathr
 
 Processing tasks ($i \notin I^{\mathrm{stg}}$):
 
-$$ \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} + \beta_i b_{i,n} $$
+$$ \mathrm{Tf}_{i,n} = \mathrm{Ts}_{i,n} + \alpha*i W*{i,n} + \beta*i b*{i,n} $$
 
 Storage / holding tasks ($i \in I^{\mathrm{stg}}$, variable duration):
 
-$$ \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} \;\le\; \mathrm{Tf}_{i,n} \;\le\; \mathrm{Ts}_{i,n} + D^{\max}_i W_{i,n}, \qquad D^{\max}_i = \mathrm{LF}_i - \mathrm{ES}_i $$
+$$ \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} \;\le\; \mathrm{Tf}_{i,n} \;\le\; \mathrm{Ts}_{i,n} + D^{\max}_i W_{i,n}, \qquad D^{\max}\_i = \mathrm{LF}\_i - \mathrm{ES}\_i $$
 
 **Global idle-collapse (`idle_collapse`).** The symmetry-breaking collapse of an idle event's start time onto the previous finish (kept inside the inactive disjunct in the makespan model) is likewise removed from the GDP block, with a tight $M = D^{\max}_i$ instead of $H$. Together with `g06` ($\mathrm{Ts}_{i,n} \ge \mathrm{Tf}_{i,n-1}$):
 
@@ -692,16 +695,16 @@ $$\sum_{i,n} y_{i,u_{m+1},n} \;\le\; \sum_{i,n} y_{i,u_m,n} \qquad m = 1,\dots,k
 
 Final produced quantity is linked to last-event inventory and production (A18):
 
-$$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho^{\mathrm{prod}}_{i,s} \, b_{i,N} = \mathrm{FinalProd}_s \quad \forall s \in S^{\mathrm{P}} $$
+$$ \mathrm{ST}_{s,N} + \sum_{i \in \mathrm{IPS}_s} \rho^{\mathrm{prod}}_{i,s} \, b\_{i,N} = \mathrm{FinalProd}\_s \quad \forall s \in S^{\mathrm{P}} $$
 
 **Aging throughput link (`A18_aging_link`):**
 For products that have an aging step, all in-house production must pass through it. The total aging batch across all events upper-bounds $\mathrm{FinalProd}_s$. For lines without Stg (single aging task):
 
-$$ \mathrm{FinalProd}_s \le \sum_{n \in N} b_{\mathrm{AgeDirect}_s,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \notin L^{\mathrm{stg}} $$
+$$ \mathrm{FinalProd}_s \le \sum_{n \in N} b\_{\mathrm{AgeDirect}\_s,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \notin L^{\mathrm{stg}} $$
 
 For lines with Stg, both the direct and Stg-path aging variants contribute:
 
-$$ \mathrm{FinalProd}_s \le \sum_{t \in \{\mathrm{AgeDirect}_s,\mathrm{AgeViaStg}_s\}} \sum_{n \in N} b_{t,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \in L^{\mathrm{stg}} $$
+$$ \mathrm{FinalProd}_s \le \sum_{t \in \{\mathrm{AgeDirect}_s,\mathrm{AgeViaStg}\_s\}} \sum_{n \in N} b\_{t,n} \quad \forall s \in S^{\mathrm{Market}} : l_s \in L^{\mathrm{stg}} $$
 
 **Per-product lateness (`LateDefByProduct`):**
 Products with an aging stage are exempt from the lateness penalty entirely. Their delivery date is considered flexible because the aging duration is inherent to the product and not under the scheduler's control.
@@ -726,17 +729,17 @@ This equality constraint is added as a component of the **active disjunct** $d_{
 
 Revenue from committed sales:
 
-$$ \mathrm{Revenue} = \sum_{s\in S^{\mathrm{Market}}} \mathrm{Price}_s \cdot D_s $$
+$$ \mathrm{Revenue} = \sum\_{s\in S^{\mathrm{Market}}} \mathrm{Price}\_s \cdot D_s $$
 
 The model treats demand as committed sales, so this revenue term is constant with respect to scheduling decisions.
 
 Grape-skin by-product revenue collected during pressing tasks:
 
-$$ \mathrm{GrapeSkinRevenue} = \sum_{i \in I^{\mathrm{press}}} \sum_{n \in N} c^{\mathrm{skin}}_i \cdot b_{i,n} $$
+$$ \mathrm{GrapeSkinRevenue} = \sum*{i \in I^{\mathrm{press}}} \sum*{n \in N} c^{\mathrm{skin}}_i \cdot b_{i,n} $$
 
 Outsourcing cost:
 
-$$ \mathrm{OutsourcingCost} = \sum_{s\in S^{\mathrm{Market}}} C^{\mathrm{out}}_s \cdot \mathrm{Outsource}_s $$
+$$ \mathrm{OutsourcingCost} = \sum\_{s\in S^{\mathrm{Market}}} C^{\mathrm{out}}\_s \cdot \mathrm{Outsource}\_s $$
 
 Lateness cost (summed over all campaigns and non-aging products):
 
@@ -746,11 +749,11 @@ where $S^{\mathrm{late}}_1 = S^{\mathrm{Market}} \setminus S^{\mathrm{Age}}$ and
 
 Raw material cost:
 
-$$ \mathrm{RawMaterialCost} = \sum_{s\in S^{\mathrm{R}}}\sum_{i:(i,s)\in \mathrm{ICS}}\sum_{n\in N} C_s^{\mathrm{raw}}\left(-\rho^{\mathrm{cons}}_{i,s}\right) b_{i,n} $$
+$$ \mathrm{RawMaterialCost} = \sum*{s\in S^{\mathrm{R}}}\sum*{i:(i,s)\in \mathrm{ICS}}\sum*{n\in N} C_s^{\mathrm{raw}}\left(-\rho^{\mathrm{cons}}*{i,s}\right) b\_{i,n} $$
 
 Discard cost:
 
-$$ \mathrm{DiscardCost} = c^{\mathrm{discard}} \sum_{s \in S^{\mathrm{I}}} \sum_{n \in N} \mathrm{Discard}_{s,n} $$
+$$ \mathrm{DiscardCost} = c^{\mathrm{discard}} \sum*{s \in S^{\mathrm{I}}} \sum*{n \in N} \mathrm{Discard}\_{s,n} $$
 
 The economic profit groups all market-facing terms:
 
@@ -760,7 +763,7 @@ Cooling cost applies to non-storage tasks ($i \in I^{\mathrm{nst}}$) running in 
 
 The disjunctive batch bounds force $b_{i,j,n} = 0$ whenever $y_{i,j,n} = 0$ (assign disjunct sets $b_{i,j,n} \in [B^{\mathrm{min}}_{i,j}, B^{\mathrm{max}}_{i,j}]$, skip disjunct sets $b_{i,j,n} = 0$). Therefore $b_{i,j,n}$ already carries the on/off state and the cooling cost is exactly linear in $b_{i,j,n}$:
 
-$$ \mathrm{CoolingCost} = c^{\mathrm{cool}} \sum_{\substack{(i,j) \in \mathrm{IJ} \\ j \in J^{\mathrm{ext}} \\ i \in I^{\mathrm{nst}}}} \sum_{n \in N} \alpha_i \, b_{i,j,n} $$
+$$ \mathrm{CoolingCost} = c^{\mathrm{cool}} \sum*{\substack{(i,j) \in \mathrm{IJ} \\ j \in J^{\mathrm{ext}} \\ i \in I^{\mathrm{nst}}}} \sum*{n \in N} \alpha*i \, b*{i,j,n} $$
 
 This is equivalent to the McCormick envelope of $\alpha_i \, b_{i,j,n} \, W_{i,n}$ but adds zero auxiliary variables and zero structural constraints, tightening the LP relaxation.
 
@@ -768,7 +771,7 @@ Storage cooling associated with $\mathrm{Stg}$ tasks ($i \in I^{\mathrm{st}}$) i
 
 **Degeneracy-breaking penalty.** A small $\varepsilon$ term pulls all task start times as early as possible, breaking the degeneracy of floating tasks (tasks that can shift freely within a feasible window without changing the economic objective):
 
-$$ \mathrm{TimePullPenalty} = \varepsilon \sum_{i \in I} \sum_{n \in N} \mathrm{Ts}_{i,n}, \quad \varepsilon = 10^{-6} $$
+$$ \mathrm{TimePullPenalty} = \varepsilon \sum*{i \in I} \sum*{n \in N} \mathrm{Ts}\_{i,n}, \quad \varepsilon = 10^{-6} $$
 
 The coefficient is small enough that it never alters the economic ranking of solutions.
 
@@ -835,13 +838,16 @@ After static preprocessing (event-range fixing), let $\mathcal{P}^{\mathrm{Bar}}
 \mathcal{P}^{\mathrm{Bar}} = \bigl\{\{(i_1,n_1),(i_2,n_2)\} : i_1,i_2 \in I^{\mathrm{Bar}},\ \text{neither fixed inactive},\ n_1 \ne n_2,\ i_1 \ne i_2,\ \mathrm{LF}_{i_1} > \mathrm{ES}_{i_2},\ \mathrm{LF}_{i_2} > \mathrm{ES}_{i_1}\bigr\}
 ```
 
-Three pruning rules are applied to this index set before constructing the sequencing binaries:
+Four pruning rules are applied to this index set before constructing the sequencing binaries:
 
-| Pruned pair                                                                            | Reason                                                                                                                                |
-|----------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| $n_1 = n_2$                                                                            | Within-event capacity bound $\sum_i \mathrm{NumBarr}_{i,n} \le \bar{n}_{\mathrm{bar}}$ already enforces non-overlap at this event     |
-| $i_1 = i_2$                                                                            | Same-task event chain $g06$ ($\mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i,n}$) forces strict temporal ordering, so no concurrent occupancy |
-| $\mathrm{LF}_{i_1} \le \mathrm{ES}_{i_2}$ or $\mathrm{LF}_{i_2} \le \mathrm{ES}_{i_1}$ | One direction of ordering is already forced by the time-window bounds, so the pair cannot overlap                                     |
+| Pruned pair                                                                                        | Reason                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| $n_1 = n_2$                                                                                        | Within-event capacity bound $\sum_i \mathrm{NumBarr}_{i,n} \le \bar{n}_{\mathrm{bar}}$ already enforces non-overlap at this event                                                                                                            |
+| $i_1 = i_2$                                                                                        | Same-task event chain $g06$ ($\mathrm{Ts}_{i,n+1} \ge \mathrm{Tf}_{i,n}$) forces strict temporal ordering, so no concurrent occupancy                                                                                                        |
+| $\mathrm{LF}_{i_1} \le \mathrm{ES}_{i_2}$ or $\mathrm{LF}_{i_2} \le \mathrm{ES}_{i_1}$             | One direction of ordering is already forced by the time-window bounds, so the pair cannot overlap                                                                                                                                            |
+| $\overline{\mathrm{NumBarr}}_{i_1} + \overline{\mathrm{NumBarr}}_{i_2} \le \bar{n}_{\mathrm{bar}}$ | Per-task vessel caps (the product-derived bound above) cannot jointly exceed the pool, so $z^{\mathrm{fwd}}=z^{\mathrm{rev}}=0$ is always feasible and all five pair constraints (capacity, both sequencing, both max-idle) are non-binding. |
+
+With the product-derived vessel caps, this capacity rule removes 864 of the barrique pairs; the jar pool is unaffected ($21 + 21 > 40$, so no jar pair can be ruled out).
 
 For each remaining pair, two sequencing binaries encode the temporal ordering:
 
