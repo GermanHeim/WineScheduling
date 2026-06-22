@@ -725,7 +725,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     # G1: tighten per-task pool-vessel upper bounds from the product cap.
     # A line cannot turn more vessels into sellable wine than product_ub allows:
-    #   NumBarr[i,n] <= ceil(product_ub[s] / (rho_prod_i * barr_cap)). 
+    #   NumBarr[i,n] <= ceil(product_ub[s] / (rho_prod_i * barr_cap)).
     # Shrinks the domains from the full pool.
     def _pool_task_ub(task, cap, pool_size):
         prod = line_product.get(task_line(task))
@@ -1067,14 +1067,17 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     barr_te = active_pool_task_events(barr_tasks)
     jar_te = active_pool_task_events(jar_tasks)
 
-    def build_pool_pairs(pool_te, label):
-        # Prune pairs whose ordering is already forced by:
+    def build_pool_pairs(pool_te, label, max_num, pool_size):
+        # Prune pairs whose ordering is already forced or whose conflict is impossible:
         #   (a) intra-event sum constraint (n1 == n2: BarrCapacity covers it)
         #   (b) g06 chain on same task (i1 == i2: strict ordering across n)
         #   (c) ES/LF windows forcing strict precedence (LF[i1] <= ES[i2] etc.)
-        # Pruned pairs cannot overlap, so capacity / sequencing binaries are redundant.
+        #   (d) capacity can never conflict: max_num[i1] + max_num[i2] <= pool_size
+        #       (G4). Then z_fwd = z_rev = 0 is always feasible, so all five pair
+        #       constraints (capacity, both sequencing, both max-idle) are
+        #       non-binding.
         pairs = []
-        skip_same_n = skip_same_i = skip_window = 0
+        skip_same_n = skip_same_i = skip_window = skip_cap = 0
         for (i1, n1), (i2, n2) in combinations(pool_te, 2):
             if n1 == n2:
                 skip_same_n += 1
@@ -1085,18 +1088,23 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             if task_LF[i1] <= task_ES[i2] or task_LF[i2] <= task_ES[i1]:
                 skip_window += 1
                 continue
+            if max_num.get(i1, pool_size) + max_num.get(i2, pool_size) <= pool_size:
+                skip_cap += 1
+                continue
             pairs.append((i1, n1, i2, n2))
         kept = len(pairs)
-        total = kept + skip_same_n + skip_same_i + skip_window
+        total = kept + skip_same_n + skip_same_i + skip_window + skip_cap
         print(
             f"  [pool seq] {label} pairs: kept {kept}/{total} "
             f"(pruned: same-event {skip_same_n}, same-task {skip_same_i}, "
-            f"window {skip_window})"
+            f"window {skip_window}, capacity {skip_cap})"
         )
         return pairs
 
-    barr_cross = build_pool_pairs(barr_te, "Barrique")
-    jar_cross = build_pool_pairs(jar_te, "Jar")
+    barr_max_num = {i: int(model.NumBarr[i, 1].ub) for i in barr_tasks}
+    jar_max_num = {i: int(model.NumJar[i, 1].ub) for i in jar_tasks}
+    barr_cross = build_pool_pairs(barr_te, "Barrique", barr_max_num, n_barr)
+    jar_cross = build_pool_pairs(jar_te, "Jar", jar_max_num, n_jar)
 
     if barr_cross:
         model.BarrSeqFwd = pyo.Var(barr_cross, domain=pyo.Binary)
