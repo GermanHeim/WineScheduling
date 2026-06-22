@@ -35,6 +35,7 @@
       - [Two-Path Intermediate Stg Storage](#two-path-intermediate-stg-storage)
       - [Static Preprocessing (Event-Range Fixing)](#static-preprocessing-event-range-fixing)
       - [Batch and Duration Linking](#batch-and-duration-linking)
+      - [Identical-Unit Symmetry Breaking](#identical-unit-symmetry-breaking)
       - [Remaining Economic Constraints](#remaining-economic-constraints)
     - [Economic Objective](#economic-objective)
     - [Barrique and Jar Pool Aggregation](#barrique-and-jar-pool-aggregation)
@@ -680,6 +681,12 @@ $$ \mathrm{Ts}_{i,n} + \alpha_i W_{i,n} \;\le\; \mathrm{Tf}_{i,n} \;\le\; \mathr
 $$ \mathrm{Ts}_{i,n} \le \mathrm{Tf}_{i,n-1} + D^{\max}_i\, W_{i,n} \qquad \forall i \in I,\ n > 1 $$
 
 $W_{i,n}=0$ gives $\mathrm{Ts}_{i,n} = \mathrm{Tf}_{i,n-1}$ (the same collapse). $W_{i,n}=1$ relaxes by the window width, not $H$. $M = D^{\max}_i$ is valid since $\mathrm{Tf}_{i,n-1} \ge \mathrm{ES}_i$ and $\mathrm{Ts}_{i,n} \le \mathrm{LF}_i$.
+
+#### Identical-Unit Symmetry Breaking
+
+Several units have multiple interchangeable physical instances (`inox_ext_10000` x2, `inox_ext_5000v` x2, `ecobulk_1100` x10). Permuting the instance labels of one base type leaves every constraint unchanged (identical capacity, flags, and bounds), so the solver would otherwise explore equivalent assignments. The instances $u_1,\dots,u_k$ of each multi-instance base are ordered by total usage over the schedule:
+
+$$\sum_{i,n} y_{i,u_{m+1},n} \;\le\; \sum_{i,n} y_{i,u_m,n} \qquad m = 1,\dots,k-1$$
 
 #### Remaining Economic Constraints
 
