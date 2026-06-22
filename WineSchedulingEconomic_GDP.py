@@ -723,6 +723,36 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         model.iJAR, model.n, domain=pyo.NonNegativeIntegers, bounds=(0, n_jar)
     )
 
+    # G1: tighten per-task pool-vessel upper bounds from the product cap.
+    # A line cannot turn more vessels into sellable wine than product_ub allows:
+    #   NumBarr[i,n] <= ceil(product_ub[s] / (rho_prod_i * barr_cap)). 
+    # Shrinks the domains from the full pool.
+    def _pool_task_ub(task, cap, pool_size):
+        prod = line_product.get(task_line(task))
+        pub = product_ub_cfg.get(prod)
+        if pub is None:
+            return pool_size
+        rho = max(
+            (
+                pyo.value(model.rhoISprod[task, s])
+                for (ii, s) in model.IPS
+                if ii == task and pyo.value(model.rhoISprod[task, s]) > 0
+            ),
+            default=1.0,
+        )
+        if rho <= 0:
+            return pool_size
+        return min(pool_size, max(1, math.ceil(pub / (rho * cap))))
+
+    for task in model.iBAR:
+        ub = _pool_task_ub(task, barr_cap, n_barr)
+        for n in model.n:
+            model.NumBarr[task, n].setub(ub)
+    for task in model.iJAR:
+        ub = _pool_task_ub(task, jar_cap, n_jar)
+        for n in model.n:
+            model.NumJar[task, n].setub(ub)
+
     model.FinalProd = pyo.Var(model.SP, domain=pyo.NonNegativeReals)
     model.Outsource = pyo.Var(model.SMarket, domain=pyo.NonNegativeReals)
     model.MS = pyo.Var(domain=pyo.NonNegativeReals, bounds=(0, model.H))
