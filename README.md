@@ -813,6 +813,12 @@ $$\mathrm{NumBarr}_{i,n} \le \bar{n}_{\mathrm{bar}}\,W_{i,n} \quad \forall i \in
 
 $$\mathrm{NumJar}_{i,n} \le \bar{n}_{\mathrm{jar}}\,W_{i,n} \quad \forall i \in I^{\mathrm{Jar}}$$
 
+**Product-derived vessel cap.** Each pool task's count is additionally capped by what its product can sell — a line cannot turn more vessels into wine than its `product_ub` allows:
+
+$$\mathrm{NumBarr}_{i,n} \le \left\lceil \frac{\mathrm{product\_ub}_{s_i}}{\rho^{\mathrm{prod}}_i \, B_{\mathrm{bar}}} \right\rceil \qquad (\text{analogously for jars})$$
+
+applied as a variable bound. This shrinks the domains from the full pool.
+
 **Per-event-index pool capacity.** At each event point, the total vessels in use across all pool tasks cannot exceed the pool size:
 
 $$\sum_{i \in I^{\mathrm{Bar}}} \mathrm{NumBarr}_{i,n} \le \bar{n}_{\mathrm{bar}} \quad \forall n \in N$$
