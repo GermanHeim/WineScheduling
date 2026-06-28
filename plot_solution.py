@@ -6,7 +6,7 @@ Usage:
     python plot_solution.py results_gdp.txt # plots a specific file
     python plot_solution.py --no-show       # save to PNG without showing
     python plot_solution.py --stn --no-show # also plot the STN graph
-    python plot_solution.py --publish       # save to EPS (publication mode)
+    python plot_solution.py --publish       # save to PDF (publication mode)
 
 Produces two figures:
     1. Gantt chart of the task schedule (one bar per unit)
@@ -1778,7 +1778,7 @@ def build_output_path(
     override: str | None,
     default_ext: str,
     publish: bool,
-    publish_ext: str = "eps",
+    publish_ext: str = "pdf",
 ) -> Path:
     """Resolve output path and enforce publish extension in publish mode."""
     if override:
@@ -1812,7 +1812,7 @@ def main():
         default=None,
         help=(
             "Output filename for Gantt chart "
-            "(default: <input_file>_gantt.png or .eps with --publish)"
+            "(default: <input_file>_gantt.png or .pdf with --publish)"
         ),
     )
     parser.add_argument(
@@ -1820,18 +1820,18 @@ def main():
         default=None,
         help=(
             "Output filename for production bar chart "
-            "(default: <input_file>_production.eps with --publish; ignored otherwise)"
+            "(default: <input_file>_production.pdf with --publish; ignored otherwise)"
         ),
     )
     parser.add_argument(
         "--publish",
         action="store_true",
-        help="Publication mode: save figures as EPS files (or SVG with --svg).",
+        help="Publication mode: save figures as PDF files (or SVG with --svg).",
     )
     parser.add_argument(
         "--svg",
         action="store_true",
-        help="With --publish, save figures as SVG instead of EPS.",
+        help="With --publish, save figures as SVG instead of PDF.",
     )
     parser.add_argument(
         "--no-title",
@@ -1870,7 +1870,7 @@ def main():
         default=None,
         help=(
             "Output filename for STN graph "
-            "(default: <toml_file>_stn.png or .eps with --publish)"
+            "(default: <toml_file>_stn.png or .pdf with --publish)"
         ),
     )
     parser.add_argument(
@@ -2029,7 +2029,7 @@ def main():
             )
 
     default_ext = (
-        "svg" if args.publish and args.svg else "eps" if args.publish else "png"
+        "svg" if args.publish and args.svg else "pdf" if args.publish else "png"
     )
     save_main_requested = (
         args.no_show
