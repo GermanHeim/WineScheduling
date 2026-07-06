@@ -1858,6 +1858,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         - model.RawMaterialCost
         - model.LatenessCost
         - model.DiscardCost
+        - model.CoolingCost
     )
 
     def obj_func(model):
