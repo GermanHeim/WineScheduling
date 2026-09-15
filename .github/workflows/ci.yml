@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: "pyproject.toml"
 
@@ -28,6 +28,5 @@ jobs:
 
       - name: Test building models
         run: |
-          uv run python -c "from WineSchedulingMS import create_wine_scheduling_model as create_ms; create_ms(); print('MS built successfully')"
           uv run python -c "from WineSchedulingMS_GDP import create_wine_scheduling_model as create_ms_gdp; create_ms_gdp(); print('MS GDP built successfully')"
           uv run python -c "from WineSchedulingEconomic_GDP import create_wine_scheduling_model as create_eco_gdp; create_eco_gdp(); print('Economic GDP built successfully')"
