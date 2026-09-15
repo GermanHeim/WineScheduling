@@ -8,7 +8,7 @@
     H = 16000  # hours
 
     # Number of event points
-    n_max = 10
+    n_max = 11
 
     # Campaign deadlines (hours). One entry per young-wine campaign (iMaxYoungWine).
     # The k-th element is the deadline for the k-th campaign.
@@ -16,7 +16,7 @@
     penaltyLate = 5 # Penalty for being late ($/hour delayed past deadline)
 
     # Technical penalty weights for profit optimization (all in USD)
-    penaltyMS = 0.5              # Penalty per hour of makespan
+    penaltyMS = 0.1               # Penalty per hour of makespan
     costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
     grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
     penaltyDiscard = 5.0          # Cost per liter discarded (approx. raw material + basic processing cost)

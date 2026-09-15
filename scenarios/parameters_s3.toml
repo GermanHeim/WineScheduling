@@ -8,15 +8,15 @@
     H = 16000  # hours
 
     # Number of event points
-    n_max = 10
+    n_max = 13
 
     # Campaign deadlines (hours). One entry per young-wine campaign (iMaxYoungWine).
     # The k-th element is the deadline for the k-th campaign.
-    deadlines = [1260, 5600, 8920, 11920, 12920]  # D1=52.5 d, D2=358 d, D3=538 d
-    penaltyLate = 5 # Penalty for being late ($/hour delayed past deadline)
+    deadlines = [1000, 3500, 6000, 8500, 11000]
+    penaltyLate = 50 # Penalty for being late ($/hour delayed past deadline)
 
     # Technical penalty weights for profit optimization (all in USD)
-    penaltyMS = 0.5              # Penalty per hour of makespan
+    penaltyMS = 0.1               # Penalty per hour of makespan
     costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
     grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
     penaltyDiscard = 5.0          # Cost per liter discarded (approx. raw material + basic processing cost)
@@ -84,21 +84,21 @@
     [products.Rose1]
         name = "Estenas Rosado"
         category = "Rose"
-        demand = 5000 # per campaign
+        demand = 7500 # per campaign
         price = 7.00
         costOutsourcing = 18.0
 
     [products.Rose2]
         name = "El rosado de Estenas"
         category = "Rose"
-        demand = 3000
+        demand = 4500
         price = 11.00
         costOutsourcing = 21.0
 
     [products.White1]
         name = "Estenas blanco"
         category = "White"
-        demand = 5000 # per campaign
+        demand = 7500 # per campaign
         price = 7.00
         costOutsourcing = 18.0
         outsourced = false
@@ -106,7 +106,7 @@
     [products.White2]
         name = "La tardana de estenas"
         category = "White"
-        demand = 3000
+        demand = 4500
         price = 11.00
         costOutsourcing = 28.0
 

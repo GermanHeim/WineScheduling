@@ -8,7 +8,7 @@
     H = 16000  # hours
 
     # Number of event points
-    n_max = 10
+    n_max = 7
 
     # Campaign deadlines (hours). One entry per young-wine campaign (iMaxYoungWine).
     # The k-th element is the deadline for the k-th campaign.
@@ -16,7 +16,7 @@
     penaltyLate = 5 # Penalty for being late ($/hour delayed past deadline)
 
     # Technical penalty weights for profit optimization (all in USD)
-    penaltyMS = 0.5              # Penalty per hour of makespan
+    penaltyMS = 0.1              # Penalty per hour of makespan
     costCooling = 5e-3            # Cooling cost for exterior tanks ($/(L h) of occupancy)
     grape_skin_value = 0.008      # Value assigned to grape skins ($/liter of grape skins produced)
     penaltyDiscard = 5.0          # Cost per liter discarded (approx. raw material + basic processing cost)
@@ -48,7 +48,7 @@
         demand = 3000
         price = 10.00
         costOutsourcing = 22.0
-        outsourced = false
+        outsourced = true
 
     [products.Red2]
         name = "Estenas crianza"
@@ -56,7 +56,7 @@
         demand = 4000
         price = 15.00
         costOutsourcing = 22.0
-        outsourced = false
+        outsourced = true
 
     [products.Red3]
         name = "Martínez Bermell"
@@ -64,7 +64,7 @@
         demand = 3500
         price = 18.00
         costOutsourcing = 26.0
-        outsourced = false
+        outsourced = true
 
     [products.Red4]
         name = "Casa Don Ángel"
@@ -72,7 +72,7 @@
         demand = 5500
         price = 22.00
         costOutsourcing = 32.0
-        outsourced = false
+        outsourced = true
 
     [products.Red5]
         name = "Para el bobal de Estenas"
@@ -101,7 +101,7 @@
         demand = 5000 # per campaign
         price = 7.00
         costOutsourcing = 18.0
-        outsourced = false
+        outsourced = true
 
     [products.White2]
         name = "La tardana de estenas"
@@ -116,21 +116,21 @@
         demand = 8000
         price = 16.00
         costOutsourcing = 29.5
-        outsourced = false
+        outsourced = true
 
 # 3. Initial Inventory - Vineyard/Reception
 #
 # 'ST0': Initial Stock at Time = 0
 [initial_inventory]
-    s_red = 655000
-    s_white_rose = 2000000
+    s_red = 28000
+    s_white_rose = 110000
 
 # 3b. Raw Material Cost (USD/L)
 #
 # Cost of grapes consumed from shared raw pools.
 [raw_material_cost]
-    s_red = 2.20
-    s_white_rose = 1.80
+    s_red = 3.50
+    s_white_rose = 3.00
 
 # 4. Upper Bounds for the Model
 #

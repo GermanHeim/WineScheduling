@@ -14,14 +14,11 @@ import tomllib
 from pyomo.opt import SolverFactory
 
 from utils import (
-    apply_warm_start,
     export_results,
-    extract_warm_start,
-    load_warm_start,
-    save_warm_start,
+    restore_variable_values,
+    snapshot_variable_values,
 )
 
-# Apply Transformation, set to "hull" or "bigm"
 transformation_type = "bigm"
 solver_name = "gurobi_persistent"
 
@@ -79,8 +76,39 @@ def add_cover_cuts(model):
     )
 
 
-def create_wine_scheduling_model(toml_file="parameters.toml"):
-    """Create and return the wine scheduling economic optimization model with GDP"""
+DEFAULT_PERFORMANCE_OPTIONS = {
+    # The integral fresh/reuse flow is already an exact physical-vessel path
+    # formulation for barriques. The generic cumulative core is therefore
+    # redundant for integer feasibility in that pool.
+    "barrique_flow_only": True,
+    # A pair relation has four states and can be represented exactly by two
+    # binary code bits instead of four one-hot binaries (Big-M mode only).
+    "compact_jar_relations": False,
+    # Use each task's proven vessel-count upper bound in every linking row.
+    "tight_pool_bounds": True,
+    # Event numbers are task-local counters, so a capacity sum over a common
+    # event number is not a valid time-capacity inequality.
+    "remove_event_index_capacity": True,
+    # Exact comparator formulations. These disaggregate the corresponding
+    # integer pool counts into explicitly named physical vessels while leaving
+    # the task/event, material-balance, timing, and objective model unchanged.
+    "individual_barriques": False,
+    "individual_jars": False,
+}
+
+
+def create_wine_scheduling_model(
+    toml_file="parameters.toml",
+    performance_options=None,
+):
+    """Create and reformulate the economic GDP model."""
+
+    perf = dict(DEFAULT_PERFORMANCE_OPTIONS)
+    if performance_options:
+        unknown = set(performance_options) - set(perf)
+        if unknown:
+            raise ValueError(f"Unknown performance option(s): {sorted(unknown)}")
+        perf.update(performance_options)
 
     def task_stage(task_name):
         return task_name.rstrip("0123456789")
@@ -108,6 +136,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         params = tomllib.load(f)
 
     model = pyo.ConcreteModel(name="WineSchedulingEconomicGDP")
+    model._performance_options = dict(perf)
 
     # ========================================
     # SETS
@@ -190,6 +219,32 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     for stg_t, base_stage in stg_variant_base.items():
         prod = line_product[task_line(stg_t)]
         aging_tasks_by_product[prod].append(stg_t)
+
+    # A line with intermediate storage has two routes:
+    # - A direct route that bypasses Stg,
+    # - A buffered route that uses the Stg-specific aging task.
+    # Keeping the alternatives explicit is important for deriving
+    # valid task/event and time-window bounds below.
+    line_task_paths: dict[str, list[list[str]]] = {}
+    for ln, cfg in lines_cfg.items():
+        if ln not in stg_int_lines:
+            line_task_paths[ln] = [
+                ["Pr" if step == "Pr" else f"{step}{ln}" for step in cfg["steps"]]
+            ]
+            continue
+        aging_step = next(step for step in cfg["steps"] if is_aging_stage(step))
+        direct_path = [
+            "Pr" if step == "Pr" else f"{step}{ln}"
+            for step in cfg["steps"]
+            if step != "Stg"
+        ]
+        buffered_path = [
+            "Pr"
+            if step == "Pr"
+            else (f"{aging_step}Stg{ln}" if step == aging_step else f"{step}{ln}")
+            for step in cfg["steps"]
+        ]
+        line_task_paths[ln] = [direct_path, buffered_path]
 
     model.i = pyo.Set(initialize=tasks)
     model.iStgInt = pyo.Set(initialize=[f"Stg{ln}" for ln in stg_int_lines])
@@ -306,16 +361,18 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     jar_cap = fixed_pool_capacity("jar") if jar_set else 0.0
     n_barr = len(barr_set)
     n_jar = len(jar_set)
+    model._n_barr = n_barr
+    model._n_jar = n_jar
 
     model.n = pyo.Set(initialize=list(range(1, params["global"]["n_max"] + 1)))
 
-    # States - built dynamically from line step definitions:
-    #   s_red / s_white_rose: shared raw-material pools by product category
-    #   m: shared liquid must pool (all pressing lines produce into / consume from)
-    #   v{l}: after Fa (zero-wait intermediate)
-    #   vl{l}: after Fl (NIS intermediate, only when Fl is in steps)
-    #   product state: final product key declared on each line
-    #   dsch: discard / discharge balance state
+    # States:
+    # - s_red / s_white_rose: shared raw-material pools by product category
+    # - m: shared liquid must pool
+    # - v{l}: after Fa (zero-wait intermediate)
+    # - vl{l}: after Fl (NIS intermediate, only when Fl is in steps)
+    # - product state: final product key declared on each line
+    # - dsch: discard balance state
     line_raw_state = {}
     raw_states = set()
     has_pressing = any("Pr" in cfg["steps"] for cfg in lines_cfg.values())
@@ -419,6 +476,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     model.SNIS = pyo.Set(
         initialize=[f"vl{ln}" for ln in lines if ln not in no_fl_lines]
         + [f"va{ln}" for ln in aging_before_cs_lines]
+    )
+    model.SD = pyo.Set(
+        initialize=sorted(set(model.SI) - set(model.SZW) - set(model.SNIS))
     )
 
     tc1_data = []
@@ -604,6 +664,10 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     dual_late_lines_set = set(young_lines) if imax_young > 1 else set()
     dual_late_products = sorted({line_product[ln] for ln in dual_late_lines_set})
     dual_late_products_set = set(dual_late_products)
+    young_lines_by_product = {
+        product: [ln for ln in young_lines if line_product[ln] == product]
+        for product in dual_late_products
+    }
 
     # Sparse Index Sets
     n_max = max(model.n)
@@ -694,8 +758,57 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             sp, rho_val = market_prod_rho[i]
             b_ub_i = min(b_ub_i, product_ub_cfg[sp] / rho_val)
         b_ub[i] = b_ub_i
+
+    # Propagate batch bounds through proven one-to-one zero-inventory arcs on
+    # young-wine lines. If producer ``ip`` and consumer ``ic`` are the unique
+    # users of state ``s``, h14/h15 and A13a imply, event by event,
+    #
+    #  -rho_cons[ic,s] * b[ic,n+1] = rho_prod[ip,s] * b[ip,n] - Discard[s,n+1].
+    #
+    # Since discard is nonnegative, an upstream bound can safely tighten the
+    # downstream batch.
+    tc1_set = set(tc1_data)
+    zero_inventory_states = set(model.SZW) | set(model.SNIS)
+    young_line_tasks = {
+        ln: ["Pr" if step == "Pr" else f"{step}{ln}" for step in lines_cfg[ln]["steps"]]
+        for ln in young_lines
+    }
+    young_zero_wait_arcs: list[tuple[str, str, str, float, float]] = []
+    for path in young_line_tasks.values():
+        for ip, ic in zip(path, path[1:]):
+            if (ip, ic) not in tc1_set:
+                continue
+            shared_states = [
+                s
+                for s in zero_inventory_states
+                if (ip, s) in model.IPS and (ic, s) in model.ICS
+            ]
+            if len(shared_states) != 1:
+                continue
+            s = shared_states[0]
+            if producer_tasks_by_state[s] != [ip] or consumer_tasks_by_state[s] != [ic]:
+                continue
+            if abs(float(pyo.value(model.ST0[s]))) > 1e-9:
+                continue
+            rho_prod = float(pyo.value(model.rhoISprod[ip, s]))
+            rho_cons = -float(pyo.value(model.rhoIScons[ic, s]))
+            if rho_prod > 0 and rho_cons > 0:
+                young_zero_wait_arcs.append((ip, ic, s, rho_prod, rho_cons))
+
+    changed = True
+    while changed:
+        changed = False
+        for ip, ic, _s, rho_prod, rho_cons in young_zero_wait_arcs:
+            consumer_ub = rho_prod * b_ub[ip] / rho_cons
+            if consumer_ub < b_ub[ic] - 1e-9:
+                b_ub[ic] = consumer_ub
+                changed = True
+
+    model._batch_ub = dict(b_ub)
+    model._young_zero_wait_arcs = tuple(young_zero_wait_arcs)
+    for i in model.i:
         for n in model.n:
-            model.b[i, n].setub(b_ub_i)
+            model.b[i, n].setub(b_ub[i])
 
     for i, j in model.ij_nonpool:
         for n in model.n:
@@ -769,8 +882,26 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         for s in (all_late_products if k == 1 else dual_late_products)
     ]
     model.Late = pyo.Var(late_camp_index, domain=pyo.NonNegativeReals)
+    campaign_products = list(dual_late_products)
+    campaign_index = [
+        (s, k) for s in campaign_products for k in range(1, imax_young + 1)
+    ]
+    model.CampaignProd = pyo.Var(campaign_index, domain=pyo.NonNegativeReals)
+    model.CampaignOutsource = pyo.Var(campaign_index, domain=pyo.NonNegativeReals)
+    for s, k in campaign_index:
+        model.CampaignProd[s, k].setub(float(product_ub_cfg[s]))
+        model.CampaignOutsource[s, k].setub(
+            float(params["products"][s]["demand"])
+            if pyo.value(model.OutsourceAllowed[s]) == 1
+            else 0.0
+        )
     model.Discard = pyo.Var(model.SI, model.n, domain=pyo.NonNegativeReals)
+    nondiscardable_states = set()
     for s in model.SI:
+        if s in nondiscardable_states:
+            for n in model.n:
+                model.Discard[s, n].fix(0.0)
+            continue
         discard_ub = max(
             (
                 pyo.value(model.rhoISprod[i, s])
@@ -786,8 +917,7 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for n in model.n:
                 model.Discard[s, n].setub(discard_ub)
 
-    # vbuf Discard left free: ZW forces AgeViaStg to run immediately after Stg (no gap),
-    # and tc1 forces W[AgeViaStg,n+1]=W[Stg,n] (no total abandon).
+    model._nondiscardable_states = frozenset(nondiscardable_states)
     model.task_jmax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMax)
     model.task_jmin = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.jMin)
     model.task_imax = pyo.Param(model.i, mutable=True, initialize=lambda m, i: m.iMax)
@@ -823,26 +953,14 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         if "min_units" in template:
             model.task_jmin[task] = int(template["min_units"])
 
-    # Cs must handle output from both aging paths (direct + via Stg).
-    # task_imax[Cs] = task_imax[AgeDirect] + task_imax[AgeViaStg] so Cs can follow
-    # every aging activation regardless of iMax setting.
+    # The two aging routes are alternatives, not independent activation budgets.
+    # Cs and the sum of direct/buffered aging activations share the line-level
+    # iMax limit (AgingPathMax is added with the activation constraints below).
     for ln in stg_int_lines:
         cs_task = f"Cs{ln}"
         if cs_task not in model.i:
             continue
-        aging_step = next(
-            (s for s in lines_cfg[ln]["steps"] if is_aging_stage(s)), None
-        )
-        if not aging_step:
-            continue
-        direct_imax = pyo.value(model.task_imax[f"{aging_step}{ln}"])
-        stg_variant = f"{aging_step}Stg{ln}"
-        stg_imax = (
-            pyo.value(model.task_imax[stg_variant])
-            if stg_variant in set(model.i)
-            else 0
-        )
-        model.task_imax[cs_task] = int(direct_imax) + int(stg_imax)
+        model.task_imax[cs_task] = int(pyo.value(model.iMax))
 
     sr_set = set(model.SR)
     smarket_set_local = set(model.SMarket)
@@ -875,13 +993,22 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             model.ST[s, n].setub(ub)
     print(f"  [ST bounds] Applied upper bounds on ST for {len(list(model.s))} states.")
 
-    # Global lower bound for makespan (longest line path)
+    # A makespan lower bound is valid only for lines that must produce in-house.
+    required_inhouse_lines = [
+        ln
+        for ln in lines
+        if pyo.value(model.D[line_product[ln]]) > 0
+        and pyo.value(model.OutsourceAllowed[line_product[ln]]) == 0
+    ]
     min_makespan = max(
-        sum(
-            pyo.value(model.alpha["Pr" if step == "Pr" else f"{step}{line}"])
-            for step in cfg["steps"]
-        )
-        for line, cfg in lines_cfg.items()
+        (
+            min(
+                sum(pyo.value(model.alpha[task]) for task in path)
+                for path in line_task_paths[line]
+            )
+            for line in required_inhouse_lines
+        ),
+        default=0.0,
     )
     model.MS.setlb(min_makespan)
 
@@ -899,62 +1026,40 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         prod_set = all_late_products if k == 1 else dual_late_products
         for s in prod_set:
             model.Late[s, k].setub(max(0.0, H_val - dk_val))
-    # Per-task time window bounds derived from minimum cumulative step durations.
-    # earliest_start[k] = sum of alpha for all steps before k (can't start earlier).
-    # latest_finish[k] = H - sum of alpha for all steps after k (must leave room).
+    # Per-task time windows over all legitimate line routes.
+    # ES is the minimum prefix and LF the maximum suffix-derived finish bound
+    # over every occurrence.
     H_val = pyo.value(model.H)
-    task_ES: dict[str, float] = {}
-    task_LF: dict[str, float] = {}
-    for line, cfg in lines_cfg.items():
-        steps = cfg["steps"]
-        tnames = ["Pr" if s == "Pr" else f"{s}{line}" for s in steps]
-        alphas = [pyo.value(model.alpha[t]) for t in tnames]
-        prefix = [0.0] * len(steps)
-        suffix = [0.0] * len(steps)
-        for k in range(1, len(steps)):
-            prefix[k] = prefix[k - 1] + alphas[k - 1]
-        for k in range(len(steps) - 2, -1, -1):
-            suffix[k] = suffix[k + 1] + alphas[k + 1]
-        for k, (step, task) in enumerate(zip(steps, tnames)):
-            lf = H_val - suffix[k]
-            if step == "Pr":
-                task_ES["Pr"] = 0.0
-                if "Pr" not in task_LF or lf > task_LF["Pr"]:
-                    task_LF["Pr"] = lf
-                continue
-            task_ES[task] = prefix[k]
-            task_LF[task] = lf
-            if prefix[k] > 0:
-                for n in model.n:
-                    model.Ts[task, n].setlb(prefix[k])
-            if suffix[k] > 0:
-                for n in model.n:
-                    model.Tf[task, n].setub(lf)
-            if lf < H_val:
-                for n in model.n:
-                    model.Ts[task, n].setub(lf)
+    task_occurrences: dict[str, list[tuple[float, float, int, int]]] = {
+        task: [] for task in model.i
+    }
+    for paths in line_task_paths.values():
+        for path in paths:
+            alphas = [pyo.value(model.alpha[task]) for task in path]
+            for pos, task in enumerate(path):
+                prefix = sum(alphas[:pos])
+                suffix = sum(alphas[pos + 1 :])
+                task_occurrences[task].append(
+                    (prefix, H_val - suffix, pos + 1, len(path))
+                )
 
-    if "Pr" in task_LF:
-        pr_lf = task_LF["Pr"]
-        if pr_lf < H_val:
-            for n in model.n:
-                model.Tf["Pr", n].setub(pr_lf)
-                model.Ts["Pr", n].setub(pr_lf)
-
-    # Stg-variant aging tasks inherit ES/LF from the direct aging task (same window)
-    for stg_t, base_stage in stg_variant_base.items():
-        ln = task_line(stg_t)
-        direct_task = f"{base_stage}{ln}"
-        es_stg = task_ES.get(direct_task, 0.0)
-        lf_stg = task_LF.get(direct_task, H_val)
-        task_ES[stg_t] = es_stg
-        task_LF[stg_t] = lf_stg
+    task_ES = {
+        task: min(occ[0] for occ in occurrences)
+        for task, occurrences in task_occurrences.items()
+    }
+    task_LF = {
+        task: max(occ[1] for occ in occurrences)
+        for task, occurrences in task_occurrences.items()
+    }
+    for task in model.i:
+        es = task_ES[task]
+        lf = task_LF[task]
         for n in model.n:
-            if es_stg > 0:
-                model.Ts[stg_t, n].setlb(es_stg)
-            if lf_stg < H_val:
-                model.Tf[stg_t, n].setub(lf_stg)
-                model.Ts[stg_t, n].setub(lf_stg)
+            if es > 0:
+                model.Ts[task, n].setlb(es)
+            if lf < H_val:
+                model.Tf[task, n].setub(lf)
+                model.Ts[task, n].setub(lf)
 
     # Per-unit time-window bounds: Tsj/Tfj inherit the tightest [min ES, max LF]
     # across the compatible tasks of that unit.
@@ -991,35 +1096,78 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             inactive_disjuncts[i, n] = d_inact
 
     # ========================================
+    # REFORMULATION MODE
+    # ========================================
+    # The timing/precedence/pool/Ecobulk logic is emitted one of two ways from the
+    # same disjunctions:
+    # - "bigm" -> structure-aware Big-M written directly on the shared activation
+    #             indicators (tight task-pair coefficients. No auxiliary variables),
+    # - "hull" -> native Pyomo.GDP disjunctions, reformulated by gdp.hull.
+    _hull = transformation_type == "hull"
+
+    def guarded_relation(tag, bare_expr, guard_bins):
+        """Emit `bare_expr` as a GDP disjunct active iff AND(guard_bins) holds.
+        The conjunction of guard indicators is encoded with the exact
+        AND-linearization on the disjunct's own indicator (hull path only)."""
+        d_on = gdp.Disjunct()
+        d_off = gdp.Disjunct()
+        model.add_component(f"{tag}_on", d_on)
+        model.add_component(f"{tag}_off", d_off)
+        d_on.c = pyo.Constraint(expr=bare_expr)
+        model.add_component(f"{tag}_dj", gdp.Disjunction(expr=[d_on, d_off]))
+        Z = d_on.binary_indicator_var
+        g = pyo.ConstraintList()
+        model.add_component(f"{tag}_guard", g)
+        for Y in guard_bins:
+            g.add(Z <= Y)
+        g.add(Z >= sum(guard_bins) - (len(guard_bins) - 1))
+
+    def pool_seq(tag, i1, n1, i2, n2, rank):
+        """Classify two pool task-events for the hull formulation.
+
+        The two non-overlap branches allow an arbitrary idle gap. The overlap
+        branches distinguish which task is already occupying vessels
+        when the other starts. This is needed to enforce the
+        cumulative pool capacity at every task start.
+        """
+        d_fwd = gdp.Disjunct()
+        d_rev = gdp.Disjunct()
+        d_ov_fwd = gdp.Disjunct()
+        d_ov_rev = gdp.Disjunct()
+        model.add_component(f"{tag}_fwd", d_fwd)
+        model.add_component(f"{tag}_rev", d_rev)
+        model.add_component(f"{tag}_ov_fwd", d_ov_fwd)
+        model.add_component(f"{tag}_ov_rev", d_ov_rev)
+        d_fwd.seq = pyo.Constraint(expr=model.Tf[i1, n1] <= model.Ts[i2, n2])
+        d_fwd.rank_order = pyo.Constraint(expr=rank[i1, n1] + 1 <= rank[i2, n2])
+        d_rev.seq = pyo.Constraint(expr=model.Tf[i2, n2] <= model.Ts[i1, n1])
+        d_rev.rank_order = pyo.Constraint(expr=rank[i2, n2] + 1 <= rank[i1, n1])
+        # i1 starts first and remains active when i2 starts.
+        d_ov_fwd.start_order = pyo.Constraint(expr=model.Ts[i1, n1] <= model.Ts[i2, n2])
+        d_ov_fwd.still_active = pyo.Constraint(
+            expr=model.Ts[i2, n2] <= model.Tf[i1, n1]
+        )
+        d_ov_fwd.rank_order = pyo.Constraint(expr=rank[i1, n1] + 1 <= rank[i2, n2])
+        # i2 starts first and remains active when i1 starts.
+        d_ov_rev.start_order = pyo.Constraint(expr=model.Ts[i2, n2] <= model.Ts[i1, n1])
+        d_ov_rev.still_active = pyo.Constraint(
+            expr=model.Ts[i1, n1] <= model.Tf[i2, n2]
+        )
+        d_ov_rev.rank_order = pyo.Constraint(expr=rank[i2, n2] + 1 <= rank[i1, n1])
+        model.add_component(
+            f"{tag}_dj", gdp.Disjunction(expr=[d_fwd, d_rev, d_ov_fwd, d_ov_rev])
+        )
+        return d_ov_fwd.binary_indicator_var, d_ov_rev.binary_indicator_var
+
+    # ========================================
     # STATIC FIXING: impossible task-event combinations
     # ========================================
-    # Task at position k (1-indexed) in a line of K steps needs:
-    #   min valid event = k
-    #   max valid event = n_max-(K-k)
-    task_pos_len: dict[str, tuple[int, int]] = {}
-    pressing_lines_all = [ln for ln in lines if "Pr" in lines_cfg[ln]["steps"]]
-    if pressing_lines_all:
-        min_K_pr = min(len(lines_cfg[ln]["steps"]) for ln in pressing_lines_all)
-        task_pos_len["Pr"] = (1, min_K_pr)
-    for line, cfg in lines_cfg.items():
-        steps = cfg["steps"]
-        K = len(steps)
-        for k, step in enumerate(steps, start=1):
-            if step == "Pr":
-                continue
-            task_pos_len[f"{step}{line}"] = (k, K)
-
-    # Stg-variant aging tasks share the same position/event window as the direct aging task
-    for stg_t, base_stage in stg_variant_base.items():
-        ln = task_line(stg_t)
-        task_pos_len[stg_t] = task_pos_len[f"{base_stage}{ln}"]
-
     n_fixed = 0
     task_valid_event_count: dict[str, int] = {}
     for i in model.i:
-        k, K = task_pos_len[i]
-        min_event = k
-        max_event = n_max - (K - k)
+        occurrences = task_occurrences[i]
+        min_event = min(pos for _, _, pos, _ in occurrences)
+        max_event = max(n_max - (length - pos) for _, _, pos, length in occurrences)
         valid = 0
         for n in model.n:
             if n < min_event or n > max_event:
@@ -1046,13 +1194,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         + (f" Clamped imax for {n_clamped} tasks." if n_clamped else "")
     )
 
-    # Cross-event pool sequencing pairs: For each unordered pair {(i1,n1),(i2,n2)} of
-    # distinct pool task-events that are not both fixed-inactive we add two
-    # sequencing binaries (z_fwd / z_rev) and three constraints that correctly handle:
-    #   - z_fwd = 1  ->  Tf[i1,n1] <= Ts[i2,n2]        (i1 finishes before i2 starts)
-    #   - z_rev = 1  ->  Tf[i2,n2] <= Ts[i1,n1]        (i2 finishes before i1 starts)
-    #   - z_fwd=z_rev=0  ->  concurrent, so combined count must <= pool size
-    # BarriqueMaxIdle fires as a side-effect of z_fwd=1 (or z_rev=1)
+    # Cross-event pool relations: for each unordered pair of distinct task-events
+    # that can overlap, select one non-overlap order or one oriented overlap.
     def active_pool_task_events(pool_tasks_list):
         return [
             (i, n)
@@ -1066,52 +1209,119 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     barr_te = active_pool_task_events(barr_tasks)
     jar_te = active_pool_task_events(jar_tasks)
+    model._barr_pool_te = tuple(barr_te)
+    model._jar_pool_te = tuple(jar_te)
 
-    def build_pool_pairs(pool_te, label, max_num, pool_size):
+    barr_count_ub = {(i, n): int(model.NumBarr[i, n].ub) for i, n in barr_te}
+    jar_count_ub = {(i, n): int(model.NumJar[i, n].ub) for i, n in jar_te}
+
+    # A strict rank resolves simultaneous starts consistently across all pairs.
+    if not perf["barrique_flow_only"]:
+        model.BarrStartRank = pyo.Var(
+            barr_te,
+            domain=pyo.NonNegativeReals,
+            bounds=(0, max(0, len(barr_te) - 1)),
+        )
+    model.JarStartRank = pyo.Var(
+        jar_te,
+        domain=pyo.NonNegativeReals,
+        bounds=(0, max(0, len(jar_te) - 1)),
+    )
+
+    def build_pool_pairs(pool_te, label):
         # Prune pairs whose ordering is already forced or whose conflict is impossible:
-        #   (a) intra-event sum constraint (n1 == n2: BarrCapacity covers it)
-        #   (b) g06 chain on same task (i1 == i2: strict ordering across n)
-        #   (c) ES/LF windows forcing strict precedence (LF[i1] <= ES[i2] etc.)
-        #   (d) capacity can never conflict: max_num[i1] + max_num[i2] <= pool_size
-        #       (G4). Then z_fwd = z_rev = 0 is always feasible, so all five pair
-        #       constraints (capacity, both sequencing, both max-idle) are
-        #       non-binding.
+        #  (a) g06 chain on same task (i1 == i2: strict ordering across n)
+        #  (b) ES/LF windows forcing strict precedence (LF[i1] <= ES[i2] etc.)
         pairs = []
-        skip_same_n = skip_same_i = skip_window = skip_cap = 0
+        skip_same_i = skip_window = 0
         for (i1, n1), (i2, n2) in combinations(pool_te, 2):
-            if n1 == n2:
-                skip_same_n += 1
-                continue
             if i1 == i2:
                 skip_same_i += 1
                 continue
             if task_LF[i1] <= task_ES[i2] or task_LF[i2] <= task_ES[i1]:
                 skip_window += 1
                 continue
-            if max_num.get(i1, pool_size) + max_num.get(i2, pool_size) <= pool_size:
-                skip_cap += 1
-                continue
             pairs.append((i1, n1, i2, n2))
         kept = len(pairs)
-        total = kept + skip_same_n + skip_same_i + skip_window + skip_cap
+        total = kept + skip_same_i + skip_window
         print(
             f"  [pool seq] {label} pairs: kept {kept}/{total} "
-            f"(pruned: same-event {skip_same_n}, same-task {skip_same_i}, "
-            f"window {skip_window}, capacity {skip_cap})"
+            f"(pruned: same-task {skip_same_i}, window {skip_window})"
         )
         return pairs
 
-    barr_max_num = {i: int(model.NumBarr[i, 1].ub) for i in barr_tasks}
-    jar_max_num = {i: int(model.NumJar[i, 1].ub) for i in jar_tasks}
-    barr_cross = build_pool_pairs(barr_te, "Barrique", barr_max_num, n_barr)
-    jar_cross = build_pool_pairs(jar_te, "Jar", jar_max_num, n_jar)
+    barr_cross = (
+        [] if perf["barrique_flow_only"] else build_pool_pairs(barr_te, "Barrique")
+    )
+    jar_cross = build_pool_pairs(jar_te, "Jar")
 
-    if barr_cross:
-        model.BarrSeqFwd = pyo.Var(barr_cross, domain=pyo.Binary)
-        model.BarrSeqRev = pyo.Var(barr_cross, domain=pyo.Binary)
-    if jar_cross:
-        model.JarSeqFwd = pyo.Var(jar_cross, domain=pyo.Binary)
-        model.JarSeqRev = pyo.Var(jar_cross, domain=pyo.Binary)
+    # A barrique is either used for the first time or transferred directly from
+    # a completed aging task. A transfer is possible only when the receiving
+    # task starts within 24 h of the source task's finish.
+    barr_reuse_arcs = []
+    for i1, n1 in barr_te:
+        for i2, n2 in barr_te:
+            if (i1, n1) == (i2, n2):
+                continue
+            if i1 == i2 and n1 >= n2:
+                continue
+            earliest_source_finish = task_ES[i1] + pyo.value(model.alpha[i1])
+            latest_destination_start = task_LF[i2] - pyo.value(model.alpha[i2])
+            earliest_handoff = max(task_ES[i2], earliest_source_finish)
+            latest_handoff = min(latest_destination_start, task_LF[i1] + 24.0)
+            if earliest_handoff > latest_handoff:
+                continue
+            barr_reuse_arcs.append((i1, n1, i2, n2))
+    model.BarrReuseArc = pyo.Set(initialize=barr_reuse_arcs, dimen=4)
+
+    def _fresh_bounds(m, i, n):
+        ub = barr_count_ub[i, n] if perf["tight_pool_bounds"] else n_barr
+        return 0, ub
+
+    def _reuse_bounds(m, i1, n1, i2, n2):
+        ub = (
+            min(barr_count_ub[i1, n1], barr_count_ub[i2, n2])
+            if perf["tight_pool_bounds"]
+            else n_barr
+        )
+        return 0, ub
+
+    if perf["individual_barriques"]:
+        model.BarrVesselUse = pyo.Var(model.JBAR, barr_te, domain=pyo.Binary)
+        model.BarrVesselFresh = pyo.Var(model.JBAR, barr_te, domain=pyo.Binary)
+        model.BarrVesselReuse = pyo.Var(
+            model.JBAR, model.BarrReuseArc, domain=pyo.Binary
+        )
+    else:
+        model.BarrFresh = pyo.Var(
+            barr_te, domain=pyo.NonNegativeIntegers, bounds=_fresh_bounds
+        )
+        model.BarrReuse = pyo.Var(
+            model.BarrReuseArc, domain=pyo.NonNegativeIntegers, bounds=_reuse_bounds
+        )
+        model.BarrReuseOn = pyo.Var(model.BarrReuseArc, domain=pyo.Binary)
+
+    if perf["individual_jars"]:
+        model.JarVesselUse = pyo.Var(model.JJAR, jar_te, domain=pyo.Binary)
+        model.JarVesselUsed = pyo.Var(model.JJAR, domain=pyo.Binary)
+    print(f"  [barrique reuse] Added {len(barr_reuse_arcs)} directed reuse arcs.")
+    if not _hull:
+        if barr_cross:
+            model.BarrSeqFwd = pyo.Var(barr_cross, domain=pyo.Binary)
+            model.BarrSeqRev = pyo.Var(barr_cross, domain=pyo.Binary)
+            model.BarrOverlapFwd = pyo.Var(barr_cross, domain=pyo.Binary)
+            model.BarrOverlapRev = pyo.Var(barr_cross, domain=pyo.Binary)
+        if jar_cross:
+            if perf["compact_jar_relations"]:
+                # Codes: 00 sequence forward, 01 sequence reverse,
+                # 10 overlap forward, 11 overlap reverse.
+                model.JarRelOverlap = pyo.Var(jar_cross, domain=pyo.Binary)
+                model.JarRelReverse = pyo.Var(jar_cross, domain=pyo.Binary)
+            else:
+                model.JarSeqFwd = pyo.Var(jar_cross, domain=pyo.Binary)
+                model.JarSeqRev = pyo.Var(jar_cross, domain=pyo.Binary)
+                model.JarOverlapFwd = pyo.Var(jar_cross, domain=pyo.Binary)
+                model.JarOverlapRev = pyo.Var(jar_cross, domain=pyo.Binary)
 
     # ========================================
     # CONSTRAINTS (Standard Algebraic)
@@ -1188,10 +1398,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             for i in model.i
             if (i, s) in model.IPS
         )
-        return model.ST[s, n_max] + produced - model.Discard[s, n_max] == 0
+        return model.ST[s, n_max] + produced == 0
 
-    # h16 covers vbuf ZW states: forces Stg output at n_max to be discarded
-    # (AgeViaStg can't run at n_max+1; h16 is the terminal cleanup for all SZW).
+    # A zero-wait state cannot carry material beyond the horizon.
     model.h16 = pyo.Constraint(model.SZW, rule=h16_rule)
 
     model.g17 = pyo.Constraint(
@@ -1232,7 +1441,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         model.iBAR,
         model.n,
         rule=lambda m, i, n: m.NumBarr[i, n]
-        <= n_barr * active_disjuncts[i, n].binary_indicator_var,
+        <= (m.NumBarr[i, n].ub if perf["tight_pool_bounds"] else n_barr)
+        * active_disjuncts[i, n].binary_indicator_var,
     )
     model.JarMin = pyo.Constraint(
         model.iJAR,
@@ -1244,7 +1454,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         model.iJAR,
         model.n,
         rule=lambda m, i, n: m.NumJar[i, n]
-        <= n_jar * active_disjuncts[i, n].binary_indicator_var,
+        <= (m.NumJar[i, n].ub if perf["tight_pool_bounds"] else n_jar)
+        * active_disjuncts[i, n].binary_indicator_var,
     )
 
     # A04: Total batch
@@ -1259,15 +1470,113 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
 
     model.A04 = pyo.Constraint(model.i, model.n, rule=A04_rule)
 
-    # Pool capacity per event: all barrique/jar tasks compete for the same physical pool
-    model.BarrCapacity = pyo.Constraint(
-        model.n,
-        rule=lambda m, n: sum(m.NumBarr[i, n] for i in m.iBAR) <= n_barr,
-    )
-    model.JarCapacity = pyo.Constraint(
-        model.n,
-        rule=lambda m, n: sum(m.NumJar[i, n] for i in m.iJAR) <= n_jar,
-    )
+    # Event numbers are local task counters rather than common time intervals.
+    if not perf["remove_event_index_capacity"]:
+        model.BarrCapacity = pyo.Constraint(
+            model.n,
+            rule=lambda m, n: sum(m.NumBarr[i, n] for i in m.iBAR) <= n_barr,
+        )
+        model.JarCapacity = pyo.Constraint(
+            model.n,
+            rule=lambda m, n: sum(m.NumJar[i, n] for i in m.iJAR) <= n_jar,
+        )
+
+    # Every barrique task receives each vessel either as a first use (Fresh) or
+    # as a timely transfer from a completed task.
+    barr_incoming = {
+        (i, n): [arc for arc in barr_reuse_arcs if arc[2:] == (i, n)]
+        for i, n in barr_te
+    }
+    barr_outgoing = {
+        (i, n): [arc for arc in barr_reuse_arcs if arc[:2] == (i, n)]
+        for i, n in barr_te
+    }
+    if perf["individual_barriques"]:
+        model.BarrVesselCount = pyo.Constraint(
+            barr_te,
+            rule=lambda m, i, n: m.NumBarr[i, n]
+            == sum(m.BarrVesselUse[j, i, n] for j in m.JBAR),
+        )
+        model.BarrVesselBalance = pyo.Constraint(
+            model.JBAR,
+            barr_te,
+            rule=lambda m, j, i, n: m.BarrVesselUse[j, i, n]
+            == m.BarrVesselFresh[j, i, n]
+            + sum(m.BarrVesselReuse[j, arc] for arc in barr_incoming[i, n]),
+        )
+        model.BarrVesselOutgoing = pyo.Constraint(
+            model.JBAR,
+            barr_te,
+            rule=lambda m, j, i, n: sum(
+                m.BarrVesselReuse[j, arc] for arc in barr_outgoing[i, n]
+            )
+            <= m.BarrVesselUse[j, i, n],
+        )
+        model.BarrVesselFirstUse = pyo.Constraint(
+            model.JBAR,
+            rule=lambda m, j: sum(m.BarrVesselFresh[j, i, n] for i, n in barr_te) <= 1,
+        )
+        ordered_barriques = sorted(model.JBAR, key=unit_order_key)
+        model.BarrVesselSymmetry = pyo.ConstraintList()
+        for previous, following in zip(ordered_barriques, ordered_barriques[1:]):
+            model.BarrVesselSymmetry.add(
+                sum(model.BarrVesselFresh[following, i, n] for i, n in barr_te)
+                <= sum(model.BarrVesselFresh[previous, i, n] for i, n in barr_te)
+            )
+    else:
+        model.BarrFreshBudget = pyo.Constraint(
+            expr=sum(model.BarrFresh[i, n] for i, n in barr_te) <= n_barr
+        )
+        model.BarrFreshBalance = pyo.Constraint(
+            barr_te,
+            rule=lambda m, i, n: m.NumBarr[i, n]
+            == m.BarrFresh[i, n] + sum(m.BarrReuse[arc] for arc in barr_incoming[i, n]),
+        )
+        model.BarrReuseOutgoing = pyo.Constraint(
+            barr_te,
+            rule=lambda m, i, n: sum(m.BarrReuse[arc] for arc in barr_outgoing[i, n])
+            <= m.NumBarr[i, n],
+        )
+        model.BarrReuseLink = pyo.Constraint(
+            model.BarrReuseArc,
+            rule=lambda m, i1, n1, i2, n2: m.BarrReuse[i1, n1, i2, n2]
+            <= (
+                min(m.NumBarr[i1, n1].ub, m.NumBarr[i2, n2].ub)
+                if perf["tight_pool_bounds"]
+                else n_barr
+            )
+            * m.BarrReuseOn[i1, n1, i2, n2],
+        )
+        # Reuse flows are integral, so this makes the binary an exact indicator
+        # of a positive transfer rather than merely an optional timing selector.
+        model.BarrReuseIndicatorLower = pyo.Constraint(
+            model.BarrReuseArc,
+            rule=lambda m, i1, n1, i2, n2: m.BarrReuse[i1, n1, i2, n2]
+            >= m.BarrReuseOn[i1, n1, i2, n2],
+        )
+
+    if perf["individual_jars"]:
+        model.JarVesselCount = pyo.Constraint(
+            jar_te,
+            rule=lambda m, i, n: m.NumJar[i, n]
+            == sum(m.JarVesselUse[j, i, n] for j in m.JJAR),
+        )
+        model.JarVesselUsedUpper = pyo.Constraint(
+            model.JJAR,
+            jar_te,
+            rule=lambda m, j, i, n: m.JarVesselUse[j, i, n] <= m.JarVesselUsed[j],
+        )
+        model.JarVesselUsedLower = pyo.Constraint(
+            model.JJAR,
+            rule=lambda m, j: m.JarVesselUsed[j]
+            <= sum(m.JarVesselUse[j, i, n] for i, n in jar_te),
+        )
+        ordered_jars = sorted(model.JJAR, key=unit_order_key)
+        model.JarVesselSymmetry = pyo.ConstraintList()
+        for previous, following in zip(ordered_jars, ordered_jars[1:]):
+            model.JarVesselSymmetry.add(
+                model.JarVesselUsed[following] <= model.JarVesselUsed[previous]
+            )
 
     # A06: Max activations (non-storage tasks)
     model.A06 = pyo.Constraint(
@@ -1275,10 +1584,26 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         rule=lambda m, i: sum(active_disjuncts[i, n].binary_indicator_var for n in m.n)
         <= m.task_imax[i],
     )
+    aging_path_tasks = {}
+    for ln in stg_int_lines:
+        aging_step = next(
+            step for step in lines_cfg[ln]["steps"] if is_aging_stage(step)
+        )
+        aging_path_tasks[ln] = (f"{aging_step}{ln}", f"{aging_step}Stg{ln}")
+    model.AgingPathMax = pyo.Constraint(
+        list(aging_path_tasks),
+        rule=lambda m, ln: sum(
+            active_disjuncts[task, n].binary_indicator_var
+            for task in aging_path_tasks[ln]
+            for n in m.n
+        )
+        <= m.iMax,
+    )
 
     # A06_min: Min activations valid cuts for non-outsourceable lines
     min_act_indices = []
     min_act_rhs: dict[str, int] = {}
+    aging_path_min_rhs: dict[str, int] = {}
 
     non_outsource_lines = [
         ln
@@ -1295,6 +1620,9 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         steps = lines_cfg[line]["steps"]
         for step in steps:
             if step == "Pr":
+                continue
+            if line in stg_int_lines and step == "Stg":
+                # Intermediate storage is an optional route.
                 continue
             task_name = f"{step}{line}"
             if task_name not in model.i:
@@ -1316,11 +1644,21 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             if max_bmax <= 0:
                 continue
             rhs = math.ceil(demand / max_bmax)
+            if (
+                line in young_lines
+                and line_product[line] in dual_late_products_set
+                and len(young_lines_by_product[line_product[line]]) == 1
+            ):
+                rhs = max(rhs, imax_young)
             rhs = min(
                 rhs,
                 task_valid_event_count.get(task_name, rhs),
                 int(pyo.value(model.task_imax[task_name])),
             )
+            if line in stg_int_lines and is_aging_stage(step):
+                if rhs >= 2:
+                    aging_path_min_rhs[line] = max(aging_path_min_rhs.get(line, 0), rhs)
+                continue
             if rhs >= 2:
                 cur = min_act_rhs.get(task_name, 0)
                 if rhs > cur:
@@ -1383,6 +1721,16 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
             f"  [A06_min] Added min-activation cuts for {len(min_act_indices)} tasks: "
             + ", ".join(f"{i}>={min_act_rhs[i]}" for i in min_act_indices)
         )
+    if aging_path_min_rhs:
+        model.AgingPathMin = pyo.Constraint(
+            list(aging_path_min_rhs),
+            rule=lambda m, ln: sum(
+                active_disjuncts[task, n].binary_indicator_var
+                for task in aging_path_tasks[ln]
+                for n in m.n
+            )
+            >= aging_path_min_rhs[ln],
+        )
     # A09/A10: Unit event sequencing (non-pool units only)
     model.A09 = pyo.Constraint(
         j_nonpool,
@@ -1420,11 +1768,20 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         i: max(0.0, task_LF.get(i, H_val) - task_ES.get(i, 0.0) - 720.0)
         for i in all_stg
     }
-    model.A_eco_stg_max = pyo.Constraint(
-        eco_stg_index,
-        rule=lambda m, i, j, n: m.Tf[i, n] - m.Ts[i, n]
-        <= 720 + eco_M[i] * (1 - m.y[i, j, n]),
-    )
+    # "Assigned to an Ecobulk unit (y=1)" implies hold <= 720 h.
+    if _hull:
+        for i, j, n in eco_stg_index:
+            guarded_relation(
+                f"ecohold_{i}_{j}_{n}",
+                model.Tf[i, n] - model.Ts[i, n] <= 720,
+                [model.y[i, j, n]],
+            )
+    else:
+        model.A_eco_stg_max = pyo.Constraint(
+            eco_stg_index,
+            rule=lambda m, i, j, n: m.Tf[i, n] - m.Ts[i, n]
+            <= 720 + eco_M[i] * (1 - m.y[i, j, n]),
+        )
 
     # Ends
     model.A18 = pyo.Constraint(
@@ -1450,6 +1807,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     aging_products = set(aging_task_by_product.keys())
 
     model.LateDefByProduct = pyo.ConstraintList()
+    campaign_branch = {}
+    campaign_last_task = {}
     for line in lines:
         product = line_product[line]
         if product in aging_products:
@@ -1487,6 +1846,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                     )
                     d_active.add_component(f"d_camp{camp_k}_late", dk)
                     camp_disjuncts_list.append(dk)
+                    campaign_branch[line, n, camp_k] = dk.binary_indicator_var
+                    campaign_last_task[line] = i_last
                 d_active.add_component(
                     "Disj_campaign_late",
                     gdp.Disjunction(expr=camp_disjuncts_list),
@@ -1524,6 +1885,134 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
                             == S
                         ),
                     )
+
+    # Allocate every young-wine completion to its ordered campaign.
+    campaign_batch_index = list(campaign_branch)
+    campaign_event_index = sorted({(ln, n) for ln, n, _k in campaign_batch_index})
+    campaign_line_index = sorted(
+        {(ln, k) for ln, _n, k in campaign_batch_index},
+        key=lambda item: (str(item[0]), int(item[1])),
+    )
+    model.CampaignBatch = pyo.Var(campaign_batch_index, domain=pyo.NonNegativeReals)
+    model.CampaignBatchUpper = pyo.Constraint(
+        campaign_batch_index,
+        rule=lambda m, ln, n, k: m.CampaignBatch[ln, n, k]
+        <= m.b[campaign_last_task[ln], n],
+    )
+    model.CampaignBatchIndicatorUpper = pyo.Constraint(
+        campaign_batch_index,
+        rule=lambda m, ln, n, k: m.CampaignBatch[ln, n, k]
+        <= b_ub[campaign_last_task[ln]] * campaign_branch[ln, n, k],
+    )
+    model.CampaignBatchIndicatorLower = pyo.Constraint(
+        campaign_batch_index,
+        rule=lambda m, ln, n, k: m.CampaignBatch[ln, n, k]
+        >= m.b[campaign_last_task[ln], n]
+        - b_ub[campaign_last_task[ln]] * (1 - campaign_branch[ln, n, k]),
+    )
+    # The nested GDP already implies these identities at integer points.
+    # We state them globally to expose the ordered-assignment structure to the root LP.
+    model.CampaignBranchRow = pyo.Constraint(
+        campaign_event_index,
+        rule=lambda m, ln, n: sum(
+            campaign_branch[ln, n, k]
+            for _ln, _n, k in campaign_batch_index
+            if _ln == ln and _n == n
+        )
+        == active_disjuncts[campaign_last_task[ln], n].binary_indicator_var,
+    )
+    model.CampaignBranchColumn = pyo.Constraint(
+        campaign_line_index,
+        rule=lambda m, ln, k: sum(
+            campaign_branch[ln, n, k]
+            for _ln, n, _k in campaign_batch_index
+            if _ln == ln and _k == k
+        )
+        <= 1,
+    )
+    model.CampaignBatchConservation = pyo.Constraint(
+        campaign_event_index,
+        rule=lambda m, ln, n: sum(
+            m.CampaignBatch[ln, n, k]
+            for _ln, _n, k in campaign_batch_index
+            if _ln == ln and _n == n
+        )
+        == m.b[campaign_last_task[ln], n],
+    )
+
+    campaign_lines_by_product = {
+        s: [ln for ln in lines if line_product[ln] == s] for s in campaign_products
+    }
+    model._campaign_branch = campaign_branch
+    model._campaign_last_task = campaign_last_task
+    model._campaign_lines_by_product = campaign_lines_by_product
+    model.CampaignProdDef = pyo.Constraint(
+        campaign_index,
+        rule=lambda m, s, k: m.CampaignProd[s, k]
+        == sum(
+            pyo.value(m.rhoISprod[campaign_last_task[ln], s])
+            * m.CampaignBatch[ln, n, k]
+            for ln in campaign_lines_by_product[s]
+            for n in m.n
+            if (ln, n, k) in campaign_branch
+        ),
+    )
+    model.CampaignDemand = pyo.Constraint(
+        campaign_index,
+        rule=lambda m, s, k: m.CampaignProd[s, k] + m.CampaignOutsource[s, k]
+        >= float(params["products"][s]["demand"]),
+    )
+    # Hull presence cut: without an assigned completion a campaign must
+    # be fully outsourced.
+    model.CampaignPresenceOutsource = pyo.Constraint(
+        campaign_index,
+        rule=lambda m, s, k: m.CampaignOutsource[s, k]
+        >= float(params["products"][s]["demand"])
+        * (
+            1
+            - sum(
+                campaign_branch[ln, n, k]
+                for ln in campaign_lines_by_product[s]
+                for n in m.n
+                if (ln, n, k) in campaign_branch
+            )
+        ),
+    )
+    required_campaign_lines = [
+        ln
+        for ln in campaign_last_task
+        if pyo.value(model.OutsourceAllowed[line_product[ln]]) == 0
+        and len(campaign_lines_by_product[line_product[ln]]) == 1
+    ]
+    model.CampaignRequiredActivations = pyo.Constraint(
+        required_campaign_lines,
+        rule=lambda m, ln: sum(
+            active_disjuncts[campaign_last_task[ln], n].binary_indicator_var
+            for n in m.n
+        )
+        >= imax_young,
+    )
+    model.CampaignTotalProd = pyo.Constraint(
+        campaign_products,
+        rule=lambda m, s: m.FinalProd[s]
+        == sum(m.CampaignProd[s, k] for k in range(1, imax_young + 1)),
+    )
+    model.CampaignTotalOutsource = pyo.Constraint(
+        campaign_products,
+        rule=lambda m, s: m.Outsource[s]
+        == sum(m.CampaignOutsource[s, k] for k in range(1, imax_young + 1)),
+    )
+    model.CampaignLateOn = pyo.Constraint(
+        campaign_index,
+        rule=lambda m, s, k: m.Late[s, k]
+        <= max(0.0, H_val - deadlines_val[k - 1])
+        * sum(
+            campaign_branch[ln, n, k]
+            for ln in campaign_lines_by_product[s]
+            for n in m.n
+            if (ln, n, k) in campaign_branch
+        ),
+    )
 
     # ========================================
     # DISJUNCTIONS (Combined Task-Unit, Eq. 2.1)
@@ -1667,122 +2156,554 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         """Big-M for Ts[cons] <= Tf[prod] + M*(2-W_prod-W_cons)."""
         return max(0.0, task_LF[i_cons] - task_ES[i_prod])
 
-    def M_bar_max(i_prev: str, i_next: str) -> float:
-        """Big-M for BarriqueMaxIdle: Ts[next] <= Tf[prev]+24 + M*(1-IsHandoff)."""
-        return max(0.0, task_LF[i_next] - task_ES[i_prev] - 24.0)
-
     def M_bar_ge(i_prev: str, i_next: str) -> float:
         """Big-M for handoff timing: Ts[next] >= Tf[prev] - M*(1-IsHandoff)."""
         return max(0.0, task_LF[i_prev] - task_ES[i_next])
 
-    if barr_cross:
-        model.BarrSeqFwdCon = pyo.Constraint(
-            barr_cross,
+    def M_reuse_window(i_prev: str, i_next: str) -> float:
+        """Big-M for Ts[next] <= Tf[prev] + 24 when a reuse arc is active."""
+        return max(0.0, task_LF[i_next] - task_ES[i_prev] - 24.0)
+
+    # A positive reuse flow means that these particular barriques leave the
+    # source task and are refilled by the destination task.
+    if perf["individual_barriques"]:
+        model.BarrVesselReuseAfter = pyo.Constraint(
+            model.JBAR,
+            model.BarrReuseArc,
+            rule=lambda m, j, i1, n1, i2, n2: m.Tf[i1, n1]
+            <= m.Ts[i2, n2]
+            + M_bar_ge(i1, i2) * (1 - m.BarrVesselReuse[j, i1, n1, i2, n2]),
+        )
+        model.BarrVesselReuseWithin24h = pyo.Constraint(
+            model.JBAR,
+            model.BarrReuseArc,
+            rule=lambda m, j, i1, n1, i2, n2: m.Ts[i2, n2]
+            <= m.Tf[i1, n1]
+            + 24.0
+            + M_reuse_window(i1, i2) * (1 - m.BarrVesselReuse[j, i1, n1, i2, n2]),
+        )
+    elif _hull:
+        for i1, n1, i2, n2 in model.BarrReuseArc:
+            reuse_on = model.BarrReuseOn[i1, n1, i2, n2]
+            guarded_relation(
+                f"barrreuse_after_{i1}_{n1}_{i2}_{n2}",
+                model.Tf[i1, n1] <= model.Ts[i2, n2],
+                [reuse_on],
+            )
+            guarded_relation(
+                f"barrreuse_24h_{i1}_{n1}_{i2}_{n2}",
+                model.Ts[i2, n2] <= model.Tf[i1, n1] + 24.0,
+                [reuse_on],
+            )
+    else:
+        model.BarrReuseAfter = pyo.Constraint(
+            model.BarrReuseArc,
             rule=lambda m, i1, n1, i2, n2: m.Tf[i1, n1]
-            <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * (1 - m.BarrSeqFwd[i1, n1, i2, n2]),
+            <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * (1 - m.BarrReuseOn[i1, n1, i2, n2]),
         )
-        model.BarrSeqRevCon = pyo.Constraint(
-            barr_cross,
-            rule=lambda m, i1, n1, i2, n2: m.Tf[i2, n2]
-            <= m.Ts[i1, n1] + M_bar_ge(i2, i1) * (1 - m.BarrSeqRev[i1, n1, i2, n2]),
-        )
-        model.BarrCapacityCross = pyo.Constraint(
-            barr_cross,
-            rule=lambda m, i1, n1, i2, n2: m.NumBarr[i1, n1] + m.NumBarr[i2, n2]
-            <= n_barr
-            + n_barr * (m.BarrSeqFwd[i1, n1, i2, n2] + m.BarrSeqRev[i1, n1, i2, n2]),
-        )
-        model.BarriqueMaxIdle = pyo.Constraint(
-            barr_cross,
+        model.BarrReuseWithin24h = pyo.Constraint(
+            model.BarrReuseArc,
             rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
             <= m.Tf[i1, n1]
             + 24.0
-            + M_bar_max(i1, i2) * (1 - m.BarrSeqFwd[i1, n1, i2, n2]),
-        )
-        model.BarriqueMaxIdleRev = pyo.Constraint(
-            barr_cross,
-            rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
-            <= m.Tf[i2, n2]
-            + 24.0
-            + M_bar_max(i2, i1) * (1 - m.BarrSeqRev[i1, n1, i2, n2]),
+            + M_reuse_window(i1, i2) * (1 - m.BarrReuseOn[i1, n1, i2, n2]),
         )
 
-    if jar_cross:
-        model.JarSeqFwdCon = pyo.Constraint(
-            jar_cross,
-            rule=lambda m, i1, n1, i2, n2: m.Tf[i1, n1]
-            <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * (1 - m.JarSeqFwd[i1, n1, i2, n2]),
+    # Pool cross-event relations:
+    # two non-overlap orders and two oriented overlap branches.
+    def _pool_manual(prefix, cross, fwd, rev, ov_fwd, ov_rev, rank):
+        model.add_component(
+            f"{prefix}SeqFwdCon",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Tf[i1, n1]
+                <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * (1 - fwd[i1, n1, i2, n2]),
+            ),
         )
-        model.JarSeqRevCon = pyo.Constraint(
-            jar_cross,
-            rule=lambda m, i1, n1, i2, n2: m.Tf[i2, n2]
-            <= m.Ts[i1, n1] + M_bar_ge(i2, i1) * (1 - m.JarSeqRev[i1, n1, i2, n2]),
+        model.add_component(
+            f"{prefix}SeqRevCon",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Tf[i2, n2]
+                <= m.Ts[i1, n1] + M_bar_ge(i2, i1) * (1 - rev[i1, n1, i2, n2]),
+            ),
         )
-        model.JarCapacityCross = pyo.Constraint(
-            jar_cross,
-            rule=lambda m, i1, n1, i2, n2: m.NumJar[i1, n1] + m.NumJar[i2, n2]
-            <= n_jar
-            + n_jar * (m.JarSeqFwd[i1, n1, i2, n2] + m.JarSeqRev[i1, n1, i2, n2]),
+        model.add_component(
+            f"{prefix}OverlapFwdStartOrder",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
+                <= m.Ts[i2, n2] + M_ge(i1, i2) * (1 - ov_fwd[i1, n1, i2, n2]),
+            ),
         )
-        model.JarMaxIdle = pyo.Constraint(
-            jar_cross,
-            rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
-            <= m.Tf[i1, n1]
-            + 24.0
-            + M_bar_max(i1, i2) * (1 - m.JarSeqFwd[i1, n1, i2, n2]),
+        model.add_component(
+            f"{prefix}OverlapFwdActive",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
+                <= m.Tf[i1, n1] + M_le(i1, i2) * (1 - ov_fwd[i1, n1, i2, n2]),
+            ),
         )
-        model.JarMaxIdleRev = pyo.Constraint(
-            jar_cross,
-            rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
-            <= m.Tf[i2, n2]
-            + 24.0
-            + M_bar_max(i2, i1) * (1 - m.JarSeqRev[i1, n1, i2, n2]),
+        model.add_component(
+            f"{prefix}OverlapRevStartOrder",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
+                <= m.Ts[i1, n1] + M_ge(i2, i1) * (1 - ov_rev[i1, n1, i2, n2]),
+            ),
         )
+        model.add_component(
+            f"{prefix}OverlapRevActive",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
+                <= m.Tf[i2, n2] + M_le(i2, i1) * (1 - ov_rev[i1, n1, i2, n2]),
+            ),
+        )
+        model.add_component(
+            f"{prefix}RelationChoice",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: fwd[i1, n1, i2, n2]
+                + rev[i1, n1, i2, n2]
+                + ov_fwd[i1, n1, i2, n2]
+                + ov_rev[i1, n1, i2, n2]
+                == 1,
+            ),
+        )
+        rank_M = max(1, len(rank))
+        model.add_component(
+            f"{prefix}RankFwd",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: rank[i1, n1] + 1
+                <= rank[i2, n2]
+                + rank_M * (1 - fwd[i1, n1, i2, n2] - ov_fwd[i1, n1, i2, n2]),
+            ),
+        )
+        model.add_component(
+            f"{prefix}RankRev",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: rank[i2, n2] + 1
+                <= rank[i1, n1]
+                + rank_M * (1 - rev[i1, n1, i2, n2] - ov_rev[i1, n1, i2, n2]),
+            ),
+        )
+
+    def _pool_compact(prefix, cross, overlap, reverse, rank):
+        """Exact two-bit encoding of the four interval-relation branches.
+
+        ``overlap`` selects sequence (0) versus overlap (1), and ``reverse``
+        selects forward (0) versus reverse (1). For binary vals exactly one
+        code has zero Hamming distance, so the integer feasible set is the same
+        as the four-way one-hot encoding.
+        """
+
+        def d00(key):
+            return overlap[key] + reverse[key]
+
+        def d01(key):
+            return overlap[key] + (1 - reverse[key])
+
+        def d10(key):
+            return (1 - overlap[key]) + reverse[key]
+
+        def d11(key):
+            return (1 - overlap[key]) + (1 - reverse[key])
+
+        model.add_component(
+            f"{prefix}SeqFwdCon",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Tf[i1, n1]
+                <= m.Ts[i2, n2] + M_bar_ge(i1, i2) * d00((i1, n1, i2, n2)),
+            ),
+        )
+        model.add_component(
+            f"{prefix}SeqRevCon",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Tf[i2, n2]
+                <= m.Ts[i1, n1] + M_bar_ge(i2, i1) * d01((i1, n1, i2, n2)),
+            ),
+        )
+        model.add_component(
+            f"{prefix}OverlapFwdStartOrder",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
+                <= m.Ts[i2, n2] + M_ge(i1, i2) * d10((i1, n1, i2, n2)),
+            ),
+        )
+        model.add_component(
+            f"{prefix}OverlapFwdActive",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
+                <= m.Tf[i1, n1] + M_le(i1, i2) * d10((i1, n1, i2, n2)),
+            ),
+        )
+        model.add_component(
+            f"{prefix}OverlapRevStartOrder",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i2, n2]
+                <= m.Ts[i1, n1] + M_ge(i2, i1) * d11((i1, n1, i2, n2)),
+            ),
+        )
+        model.add_component(
+            f"{prefix}OverlapRevActive",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: m.Ts[i1, n1]
+                <= m.Tf[i2, n2] + M_le(i2, i1) * d11((i1, n1, i2, n2)),
+            ),
+        )
+        rank_M = max(1, len(rank))
+        model.add_component(
+            f"{prefix}RankFwd",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: rank[i1, n1] + 1
+                <= rank[i2, n2] + rank_M * reverse[i1, n1, i2, n2],
+            ),
+        )
+        model.add_component(
+            f"{prefix}RankRev",
+            pyo.Constraint(
+                cross,
+                rule=lambda m, i1, n1, i2, n2: rank[i2, n2] + 1
+                <= rank[i1, n1] + rank_M * (1 - reverse[i1, n1, i2, n2]),
+            ),
+        )
+
+    def _add_pool_cumulative_capacity(prefix, pool_te, cross, num, cap, ov_fwd, ov_rev):
+        """Enforce capacity at every pool-task start.
+
+        For a fixed set of intervals, cumulative usage can change only at a task
+        start or finish. Checking every task start is sufficient.
+        """
+        use_index = []
+        overlap_indicator = {}
+        for i1, n1, i2, n2 in cross:
+            # overlap-fwd: (i1,n1) is active at the start of (i2,n2)
+            use_index.append((i1, n1, i2, n2))
+            overlap_indicator[i1, n1, i2, n2] = ov_fwd[i1, n1, i2, n2]
+            # overlap-rev: (i2,n2) is active at the start of (i1,n1)
+            use_index.append((i2, n2, i1, n1))
+            overlap_indicator[i2, n2, i1, n1] = ov_rev[i1, n1, i2, n2]
+
+        index_name = f"{prefix}UseIndex"
+        use_name = f"{prefix}UseAtStart"
+        model.add_component(index_name, pyo.Set(initialize=use_index, dimen=4))
+        use_index_set = getattr(model, index_name)
+
+        def source_ub(ib, nb):
+            return num[ib, nb].ub if perf["tight_pool_bounds"] else cap
+
+        model.add_component(
+            use_name,
+            pyo.Var(
+                use_index_set,
+                domain=pyo.NonNegativeReals,
+                bounds=lambda m, ib, nb, ia, na: (0, source_ub(ib, nb)),
+            ),
+        )
+        use = getattr(model, use_name)
+        model.add_component(
+            f"{prefix}UseUpperCount",
+            pyo.Constraint(
+                use_index_set,
+                rule=lambda m, ib, nb, ia, na: use[ib, nb, ia, na] <= num[ib, nb],
+            ),
+        )
+        model.add_component(
+            f"{prefix}UseUpperIndicator",
+            pyo.Constraint(
+                use_index_set,
+                rule=lambda m, ib, nb, ia, na: use[ib, nb, ia, na]
+                <= source_ub(ib, nb) * overlap_indicator[ib, nb, ia, na],
+            ),
+        )
+        model.add_component(
+            f"{prefix}UseLower",
+            pyo.Constraint(
+                use_index_set,
+                rule=lambda m, ib, nb, ia, na: use[ib, nb, ia, na]
+                >= num[ib, nb]
+                - source_ub(ib, nb) * (1 - overlap_indicator[ib, nb, ia, na]),
+            ),
+        )
+
+        by_checkpoint = {
+            (i, n): [key for key in use_index if key[2:] == (i, n)] for i, n in pool_te
+        }
+        model.add_component(
+            f"{prefix}CapacityAtStart",
+            pyo.Constraint(
+                pool_te,
+                rule=lambda m, i, n: num[i, n]
+                + sum(use[key] for key in by_checkpoint[i, n])
+                <= cap,
+            ),
+        )
+
+    def _add_pool_cumulative_capacity_compact(
+        prefix, pool_te, cross, num, cap, overlap, reverse
+    ):
+        """Cumulative profile linearization for the exact two-bit relation code."""
+        use_index = []
+        code = {}
+        for i1, n1, i2, n2 in cross:
+            use_index.append((i1, n1, i2, n2))
+            code[i1, n1, i2, n2] = (overlap[i1, n1, i2, n2], reverse[i1, n1, i2, n2], 0)
+            use_index.append((i2, n2, i1, n1))
+            code[i2, n2, i1, n1] = (overlap[i1, n1, i2, n2], reverse[i1, n1, i2, n2], 1)
+
+        index_name = f"{prefix}UseIndex"
+        use_name = f"{prefix}UseAtStart"
+        model.add_component(index_name, pyo.Set(initialize=use_index, dimen=4))
+        use_index_set = getattr(model, index_name)
+
+        def source_ub(ib, nb):
+            return num[ib, nb].ub if perf["tight_pool_bounds"] else cap
+
+        model.add_component(
+            use_name,
+            pyo.Var(
+                use_index_set,
+                domain=pyo.NonNegativeReals,
+                bounds=lambda m, ib, nb, ia, na: (0, source_ub(ib, nb)),
+            ),
+        )
+        use = getattr(model, use_name)
+        model.add_component(
+            f"{prefix}UseUpperCount",
+            pyo.Constraint(
+                use_index_set,
+                rule=lambda m, ib, nb, ia, na: use[ib, nb, ia, na] <= num[ib, nb],
+            ),
+        )
+        model.add_component(f"{prefix}UseCode", pyo.ConstraintList())
+        use_code = getattr(model, f"{prefix}UseCode")
+        for key in use_index:
+            ib, nb, _, _ = key
+            ov, rev, reverse_value = code[key]
+            ub = source_ub(ib, nb)
+            use_code.add(use[key] <= ub * ov)
+            if reverse_value:
+                use_code.add(use[key] <= ub * rev)
+                use_code.add(use[key] >= num[ib, nb] - ub * ((1 - ov) + (1 - rev)))
+            else:
+                use_code.add(use[key] <= ub * (1 - rev))
+                use_code.add(use[key] >= num[ib, nb] - ub * ((1 - ov) + rev))
+
+        by_checkpoint = {
+            (i, n): [key for key in use_index if key[2:] == (i, n)] for i, n in pool_te
+        }
+        model.add_component(
+            f"{prefix}CapacityAtStart",
+            pyo.Constraint(
+                pool_te,
+                rule=lambda m, i, n: num[i, n]
+                + sum(use[key] for key in by_checkpoint[i, n])
+                <= cap,
+            ),
+        )
+
+    def _add_named_jar_conflicts(overlap_fwd, overlap_rev=None):
+        """Forbid one named jar from serving two intervals that overlap."""
+        model.JarVesselOverlapConflict = pyo.ConstraintList()
+        for key in jar_cross:
+            i1, n1, i2, n2 = key
+            overlap = overlap_fwd[key]
+            if overlap_rev is not None:
+                overlap += overlap_rev[key]
+            for vessel in model.JJAR:
+                model.JarVesselOverlapConflict.add(
+                    model.JarVesselUse[vessel, i1, n1]
+                    + model.JarVesselUse[vessel, i2, n2]
+                    <= 2 - overlap
+                )
+
+    if _hull:
+        barr_overlap_fwd = {}
+        barr_overlap_rev = {}
+        for i1, n1, i2, n2 in barr_cross:
+            fwd, rev = pool_seq(
+                f"barrseq_{i1}_{n1}_{i2}_{n2}",
+                i1,
+                n1,
+                i2,
+                n2,
+                model.BarrStartRank,
+            )
+            barr_overlap_fwd[i1, n1, i2, n2] = fwd
+            barr_overlap_rev[i1, n1, i2, n2] = rev
+        jar_overlap_fwd = {}
+        jar_overlap_rev = {}
+        for i1, n1, i2, n2 in jar_cross:
+            fwd, rev = pool_seq(
+                f"jarseq_{i1}_{n1}_{i2}_{n2}",
+                i1,
+                n1,
+                i2,
+                n2,
+                model.JarStartRank,
+            )
+            jar_overlap_fwd[i1, n1, i2, n2] = fwd
+            jar_overlap_rev[i1, n1, i2, n2] = rev
+        if barr_cross:
+            _add_pool_cumulative_capacity(
+                "Barr",
+                barr_te,
+                barr_cross,
+                model.NumBarr,
+                n_barr,
+                barr_overlap_fwd,
+                barr_overlap_rev,
+            )
+        if jar_cross:
+            if perf["individual_jars"]:
+                _add_named_jar_conflicts(jar_overlap_fwd, jar_overlap_rev)
+            else:
+                _add_pool_cumulative_capacity(
+                    "Jar",
+                    jar_te,
+                    jar_cross,
+                    model.NumJar,
+                    n_jar,
+                    jar_overlap_fwd,
+                    jar_overlap_rev,
+                )
+    else:
+        if barr_cross:
+            _pool_manual(
+                "Barr",
+                barr_cross,
+                model.BarrSeqFwd,
+                model.BarrSeqRev,
+                model.BarrOverlapFwd,
+                model.BarrOverlapRev,
+                model.BarrStartRank,
+            )
+            _add_pool_cumulative_capacity(
+                "Barr",
+                barr_te,
+                barr_cross,
+                model.NumBarr,
+                n_barr,
+                model.BarrOverlapFwd,
+                model.BarrOverlapRev,
+            )
+        if jar_cross:
+            if perf["compact_jar_relations"]:
+                _pool_compact(
+                    "Jar",
+                    jar_cross,
+                    model.JarRelOverlap,
+                    model.JarRelReverse,
+                    model.JarStartRank,
+                )
+                if perf["individual_jars"]:
+                    _add_named_jar_conflicts(model.JarRelOverlap)
+                else:
+                    _add_pool_cumulative_capacity_compact(
+                        "Jar",
+                        jar_te,
+                        jar_cross,
+                        model.NumJar,
+                        n_jar,
+                        model.JarRelOverlap,
+                        model.JarRelReverse,
+                    )
+            else:
+                _pool_manual(
+                    "Jar",
+                    jar_cross,
+                    model.JarSeqFwd,
+                    model.JarSeqRev,
+                    model.JarOverlapFwd,
+                    model.JarOverlapRev,
+                    model.JarStartRank,
+                )
+                if perf["individual_jars"]:
+                    _add_named_jar_conflicts(model.JarOverlapFwd, model.JarOverlapRev)
+                else:
+                    _add_pool_cumulative_capacity(
+                        "Jar",
+                        jar_te,
+                        jar_cross,
+                        model.NumJar,
+                        n_jar,
+                        model.JarOverlapFwd,
+                        model.JarOverlapRev,
+                    )
 
     # ========================================
     # PRECEDENCE (Conditional Constraints, Eq. 2.2)
     # ========================================
 
-    # General: W_{i',n} and W_{i,n+1} both active implies Ts_{i,n+1} >= Tf_{i',n}
-    model.prec_ge = pyo.Constraint(
-        [
-            (i_cons, i_prod, s, n)
-            for i_cons, i_prod, s in precedence_pairs
-            for n in model.n
-            if n < n_max
-        ],
-        rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
-        >= m.Tf[i_prod, n]
-        - M_ge(i_prod, i_cons)
-        * (
-            2
-            - active_disjuncts[i_prod, n].binary_indicator_var
-            - active_disjuncts[i_cons, n + 1].binary_indicator_var
-        ),
-    )
-
-    # ZW + NIS + Ecobulk: W_{i',n} and W_{i,n+1} both active implies Ts_{i,n+1} = Tf_{i',n}
+    # Precedence: "i' active at n AND i active at n+1 implies Ts_{i,n+1} >= Tf_{i',n}"
+    #   (and equality for zero-wait / NIS / Ecobulk pairs). In hull mode, this is a
+    #   guarded GDP disjunction; in Big-M mode it is the structure-aware Big-M
+    #   reformulation written directly on the shared activation indicators.
     zw_nis_eco_pairs = [
         (i_cons, i_prod, s)
         for i_cons, i_prod, s in precedence_pairs
         if s in model.SZW or s in model.SNIS or s in model.SFISEco
     ]
-    model.prec_le = pyo.Constraint(
-        [
-            (i_cons, i_prod, s, n)
-            for i_cons, i_prod, s in zw_nis_eco_pairs
-            for n in model.n
-            if n < n_max
-        ],
-        rule=lambda m, i_cons, i_prod, s, n: m.Ts[i_cons, n + 1]
-        <= m.Tf[i_prod, n]
-        + M_le(i_prod, i_cons)
-        * (
-            2
-            - active_disjuncts[i_prod, n].binary_indicator_var
-            - active_disjuncts[i_cons, n + 1].binary_indicator_var
-        ),
-    )
+    zw_nis_eco_set = set(zw_nis_eco_pairs)
+
+    if _hull:
+        for i_cons, i_prod, s in precedence_pairs:
+            for n in model.n:
+                if n >= n_max:
+                    continue
+                guard = [
+                    active_disjuncts[i_prod, n].binary_indicator_var,
+                    active_disjuncts[i_cons, n + 1].binary_indicator_var,
+                ]
+                guarded_relation(
+                    f"precge_{i_prod}_{i_cons}_{n}",
+                    model.Ts[i_cons, n + 1] >= model.Tf[i_prod, n],
+                    guard,
+                )
+                if (i_cons, i_prod, s) in zw_nis_eco_set:
+                    guarded_relation(
+                        f"precle_{i_prod}_{i_cons}_{n}",
+                        model.Ts[i_cons, n + 1] <= model.Tf[i_prod, n],
+                        guard,
+                    )
+    else:
+
+        def _wprod(ip, n):
+            return active_disjuncts[ip, n].binary_indicator_var
+
+        def _wcons(ic, n):
+            return active_disjuncts[ic, n].binary_indicator_var
+
+        model.prec_ge = pyo.Constraint(
+            [
+                (ic, ip, s, n)
+                for ic, ip, s in precedence_pairs
+                for n in model.n
+                if n < n_max
+            ],
+            rule=lambda m, ic, ip, s, n: m.Ts[ic, n + 1]
+            >= m.Tf[ip, n] - M_ge(ip, ic) * (2 - _wprod(ip, n) - _wcons(ic, n + 1)),
+        )
+        model.prec_le = pyo.Constraint(
+            [
+                (ic, ip, s, n)
+                for ic, ip, s in zw_nis_eco_pairs
+                for n in model.n
+                if n < n_max
+            ],
+            rule=lambda m, ic, ip, s, n: m.Ts[ic, n + 1]
+            <= m.Tf[ip, n] + M_le(ip, ic) * (2 - _wprod(ip, n) - _wcons(ic, n + 1)),
+        )
 
     # ========================================
     # OBJECTIVE FUNCTION
@@ -1845,9 +2766,8 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     )
 
     model.MakespanPenalty = pyo.Expression(expr=model.penaltyMS * model.MS)
-    # epsilon-trick: tiny penalty pulling all task start times as early as possible.
-    # Breaks the degeneracy of "floating" tasks that can shift freely without
-    # changing the objective.
+    # Start-time pulling is applied only in a second, lexicographic solve after
+    # the primary MIP has terminated.
     model.TimePullPenalty = pyo.Expression(
         expr=1e-6 * sum(model.Ts[i, n] for i in model.i for n in model.n)
     )
@@ -1861,19 +2781,19 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
         - model.CoolingCost
     )
 
+    model.PrimaryObjective = pyo.Expression(
+        expr=model.GrapeSkinRevenue
+        - model.OutsourcingCost
+        - model.LatenessCost
+        - model.RawMaterialCost
+        - model.MakespanPenalty
+        - model.CoolingCost
+        - model.DiscardCost
+        - model.StgHoldingCost
+    )
+
     def obj_func(model):
-        return (
-            # model.Revenue
-            +model.GrapeSkinRevenue
-            - model.OutsourcingCost
-            - model.LatenessCost
-            - model.RawMaterialCost
-            - model.MakespanPenalty
-            - model.CoolingCost
-            - model.DiscardCost
-            - model.StgHoldingCost
-            - model.TimePullPenalty
-        )
+        return model.PrimaryObjective
 
     model.OBJ = pyo.Objective(rule=obj_func, sense=pyo.maximize)
 
@@ -1930,16 +2850,147 @@ def create_wine_scheduling_model(toml_file="parameters.toml"):
     # Stash for solver-side branching priority assignment.
     model._active_disjuncts = active_disjuncts
 
+    # Two reformulations of the same disjunctive model:
+    #  "bigm" -> gdp.bigm on the activation/assignment disjunctions, with the
+    #             timing/precedence/pool logic already written as structure-aware
+    #             Big-M (the delivered model),
+    #  "hull" -> gdp.hull on the full disjunctive model (all logic as disjunctions).
     print(f"Applying GDP {transformation_type} transformation...")
-    pyo.TransformationFactory(f"gdp.{transformation_type}").apply_to(model)
+    if transformation_type == "hull":
+        pyo.TransformationFactory("gdp.hull").apply_to(model)
+    else:
+        pyo.TransformationFactory("gdp.bigm").apply_to(model)
 
     return model
+
+
+def _has_solver_incumbent(results):
+    """Return whether the solver reported at least one feasible solution."""
+    try:
+        count = results.problem.number_of_solutions
+        if count is not None:
+            return int(count) > 0
+    except (AttributeError, TypeError, ValueError):
+        pass
+    try:
+        return len(results.solution) > 0
+    except (AttributeError, TypeError):
+        return False
+
+
+def _audit_pool_solution(model, tol=1e-5):
+    """Validate and decompose the aggregate pool solution after every solve."""
+
+    def integer_value(var, label):
+        value = pyo.value(var, exception=False)
+        if value is None or abs(value - round(value)) > tol:
+            raise RuntimeError(f"Pool audit: {label} is not integral ({value}).")
+        return int(round(value))
+
+    fresh = getattr(model, "BarrFresh", None)
+    reuse = getattr(model, "BarrReuse", None)
+    if fresh is not None and reuse is not None:
+        nodes = sorted(
+            list(fresh),
+            key=lambda key: (pyo.value(model.Ts[key]), str(key[0]), int(key[1])),
+        )
+        incoming_paths = {key: [] for key in nodes}
+        paths = {}
+        next_path = 0
+        outgoing = {key: [] for key in nodes}
+        for arc in model.BarrReuseArc:
+            amount = integer_value(reuse[arc], f"BarrReuse{arc}")
+            if amount:
+                i1, n1, i2, n2 = arc
+                finish = pyo.value(model.Tf[i1, n1])
+                start = pyo.value(model.Ts[i2, n2])
+                if finish > start + tol or start > finish + 24.0 + tol:
+                    raise RuntimeError(
+                        f"Pool audit: positive reuse {arc} violates the 24 h window."
+                    )
+                outgoing[i1, n1].append((start, arc, amount))
+
+        for node in nodes:
+            count = integer_value(model.NumBarr[node], f"NumBarr{node}")
+            new_count = integer_value(fresh[node], f"BarrFresh{node}")
+            held = list(incoming_paths[node])
+            for _ in range(new_count):
+                paths[next_path] = []
+                held.append(next_path)
+                next_path += 1
+            if len(held) != count:
+                raise RuntimeError(
+                    f"Pool audit: barrique balance at {node} gives {len(held)} "
+                    f"paths for a count of {count}."
+                )
+            for path in held:
+                paths[path].append(node)
+            cursor = 0
+            for _, arc, amount in sorted(outgoing[node]):
+                destination = arc[2:]
+                selected = held[cursor : cursor + amount]
+                if len(selected) != amount:
+                    raise RuntimeError(
+                        f"Pool audit: outgoing reuse exceeds held barriques at {node}."
+                    )
+                incoming_paths[destination].extend(selected)
+                cursor += amount
+
+        if next_path > model._n_barr:
+            raise RuntimeError(
+                f"Pool audit: solution requires {next_path} fresh barriques; "
+                f"only {model._n_barr} exist."
+            )
+        for path, path_nodes in paths.items():
+            for previous, following in zip(path_nodes, path_nodes[1:]):
+                finish = pyo.value(model.Tf[previous])
+                start = pyo.value(model.Ts[following])
+                if finish > start + tol or start > finish + 24.0 + tol:
+                    raise RuntimeError(
+                        f"Pool audit: decomposed barrique path {path} is invalid."
+                    )
+    else:
+        next_path = 0
+
+    jar_intervals = []
+    if hasattr(model, "NumJar"):
+        for key in model.NumJar:
+            count = integer_value(model.NumJar[key], f"NumJar{key}")
+            if count:
+                jar_intervals.append(
+                    (key, pyo.value(model.Ts[key]), pyo.value(model.Tf[key]), count)
+                )
+        max_jar_use = 0
+        for _, checkpoint, _, _ in jar_intervals:
+            live = sum(
+                count
+                for _, start, finish, count in jar_intervals
+                if start <= checkpoint + tol and finish > checkpoint + tol
+            )
+            max_jar_use = max(max_jar_use, live)
+            if live > model._n_jar:
+                raise RuntimeError(
+                    f"Pool audit: jar occupancy {live} exceeds {model._n_jar} "
+                    f"at time {checkpoint}."
+                )
+    else:
+        max_jar_use = 0
+
+    print(
+        f"Pool audit passed: {next_path}/{model._n_barr} barrique paths; "
+        f"maximum jar occupancy {max_jar_use}/{model._n_jar}."
+    )
+    return {"barrique_paths": next_path, "max_jar_occupancy": max_jar_use}
 
 
 def solve_model(
     model,
     time_limit=3600 * 2,
-    warmstart_path="warmstart_economic.json",
+    results_path="results_economic_gdp.txt",
+    mipgap=0.03,
+    tie_break_time_limit=60,
+    branch_priorities=True,
+    threads=6,
 ):
     solver = SolverFactory(solver_name)
     if solver is None:
@@ -1948,8 +2999,9 @@ def solve_model(
 
     # Set solver options
     solver.options["TimeLimit"] = time_limit
-    solver.options["MIPGap"] = 0.001
-    # solver.options["MIPGap"] = 0.02
+    solver.options["MIPGap"] = mipgap
+    if threads is not None:
+        solver.options["Threads"] = threads
     # solver.options["MIPFocus"] = 2
     # solver.options["Heuristics"] = 0.25
     # solver.options["Cuts"] = 2
@@ -1957,36 +3009,99 @@ def solve_model(
     # solver.options["Presolve"] = 2
     # solver.options["Method"] = 2
 
-    use_warmstart = False
-    if warmstart_path:
-        try:
-            snapshot = load_warm_start(warmstart_path)
-            apply_warm_start(model, snapshot)
-            use_warmstart = True
-            print(f"Applied warm start from {warmstart_path}")
-        except FileNotFoundError:
-            print(f"Warm start file {warmstart_path} not found; cold starting.")
-
     if solver_name == "gurobi_persistent":
         solver.set_instance(model)
-        for (_, _), d_active in model._active_disjuncts.items():
-            solver.set_var_attr(d_active.binary_indicator_var, "BranchPriority", 100)
-        for idx in model.y:
-            solver.set_var_attr(model.y[idx], "BranchPriority", 50)
+        if branch_priorities:
+            for (_, _), d_active in model._active_disjuncts.items():
+                solver.set_var_attr(
+                    d_active.binary_indicator_var, "BranchPriority", 100
+                )
+            for idx in model.y:
+                solver.set_var_attr(model.y[idx], "BranchPriority", 50)
+            print("Branching priorities enabled (task activation=100, assignment=50).")
+        else:
+            print("Branching priorities disabled.")
         print(f"Solving with {solver_name}...")
-        results = solver.solve(tee=True, warmstart=use_warmstart)
+        results = solver.solve(tee=True)
     else:
         print(f"Solving with {solver_name}...")
-        results = solver.solve(
-            model,
-            tee=True,
-            warmstart=use_warmstart,
+        results = solver.solve(model, tee=True)
+
+    # Lexicographic start-time tie-break
+    primary_termination = results.solver.termination_condition
+    reported_gap = results.solver.get("gap", None)
+    exact_primary = (
+        primary_termination == pyo.TerminationCondition.optimal
+        and reported_gap is not None
+        and float(reported_gap) <= 1e-9
+    )
+    if tie_break_time_limit and exact_primary:
+        primary_value = pyo.value(model.PrimaryObjective)
+        primary_snapshot = snapshot_variable_values(model)
+        model.OBJ.deactivate()
+        model.PrimaryObjectiveFloor = pyo.Constraint(
+            expr=model.PrimaryObjective >= primary_value - 1e-6
+        )
+        model.TimePullOBJ = pyo.Objective(
+            expr=sum(model.Ts[i, n] for i in model.i for n in model.n),
+            sense=pyo.minimize,
+        )
+        if solver_name == "gurobi_persistent":
+            solver.add_constraint(model.PrimaryObjectiveFloor)
+            solver.set_objective(model.TimePullOBJ)
+            solver.options["TimeLimit"] = tie_break_time_limit
+            solver.options["MIPGap"] = 0.0
+            tie_results = solver.solve(tee=True, warmstart=True)
+        else:
+            solver.options["TimeLimit"] = tie_break_time_limit
+            solver.options["MIPGap"] = 0.0
+            tie_results = solver.solve(model, tee=True, warmstart=True)
+        tie_ok = tie_results.solver.termination_condition in {
+            pyo.TerminationCondition.optimal,
+            pyo.TerminationCondition.feasible,
+            pyo.TerminationCondition.maxTimeLimit,
+        }
+        retained_primary = pyo.value(model.PrimaryObjective, exception=False)
+        if (
+            not tie_ok
+            or retained_primary is None
+            or retained_primary < primary_value - 2e-6
+        ):
+            restore_variable_values(primary_snapshot)
+            print(
+                "Secondary time tie-break failed validation; restored primary solution."
+            )
+        else:
+            print(
+                "Applied lexicographic start-time tie-break without changing "
+                f"the primary objective ({retained_primary:.6f})."
+            )
+        model.TimePullOBJ.deactivate()
+        model.OBJ.activate()
+    elif tie_break_time_limit:
+        print(
+            "Skipped start-time tie-break because the primary solve did not "
+            "report a zero optimality gap."
         )
 
-    if (
-        results.solver.termination_condition == pyo.TerminationCondition.optimal
-        or results.solver.termination_condition == pyo.TerminationCondition.feasible
-    ):
+    termination = results.solver.termination_condition
+    has_incumbent = _has_solver_incumbent(results)
+    accepted_termination = {
+        pyo.TerminationCondition.optimal,
+        pyo.TerminationCondition.feasible,
+    }
+    if has_incumbent:
+        _audit_pool_solution(model)
+        if termination == pyo.TerminationCondition.maxTimeLimit:
+            print(
+                "Time limit reached with a feasible incumbent; exporting the "
+                f"incumbent (reported MIP gap: {results.solver.get('gap', 'unavailable')})."
+            )
+        elif termination not in accepted_termination:
+            print(
+                f"Solver stopped with termination condition {termination}; "
+                "exporting the reported feasible incumbent."
+            )
         print(f"Objective: {pyo.value(model.OBJ, exception=False)}")
         if hasattr(model, "Revenue"):
             print(
@@ -2011,24 +3126,23 @@ def solve_model(
                 f"  Discard Cost:     -{pyo.value(model.DiscardCost, exception=False):.2f}"
             )
             print(
+                f"  Cooling Cost:     -{pyo.value(model.CoolingCost, exception=False):.2f}"
+            )
+            print("Scheduling penalties (not in Profit):")
+            print(
                 f"  Stg Holding Cost: -{pyo.value(model.StgHoldingCost, exception=False):.2f}"
             )
-            print("Penalties:")
             print(
                 f"  Makespan:         -{pyo.value(model.MakespanPenalty, exception=False):.2f}"
             )
             print(
-                f"  Cooling:          -{pyo.value(model.CoolingCost, exception=False):.2f}"
-            )
-            print(
-                f"  Time Pull:        -{pyo.value(model.TimePullPenalty, exception=False):.2f}"
+                f"  Time Pull metric: {pyo.value(model.TimePullPenalty, exception=False):.2f}"
             )
         export_results(
             model,
             "Wine Scheduling Economic GDP",
-            "results_economic_gdp.txt",
+            results_path,
         )
-        save_warm_start(extract_warm_start(model), "warmstart_economic.json")
     else:
         print("No solution or Infeasible")
 
@@ -2036,24 +3150,27 @@ def solve_model(
 
 
 if __name__ == "__main__":
+    import os
     import sys
 
-    warmstart_arg = None
+    params_file = "parameters.toml"
     args = sys.argv[1:]
     for i, a in enumerate(args):
-        if a == "--warmstart":
+        if a == "--params":
             if i + 1 < len(args) and not args[i + 1].startswith("--"):
-                warmstart_arg = args[i + 1]
-            else:
-                warmstart_arg = "warmstart_economic.json"
-            break
-        if a.startswith("--warmstart="):
-            warmstart_arg = a.split("=", 1)[1]
-            break
+                params_file = args[i + 1]
+        elif a.startswith("--params="):
+            params_file = a.split("=", 1)[1]
 
+    stem = os.path.splitext(os.path.basename(params_file))[0]
+    suffix = stem.replace("parameters", "", 1)
+    results_path = f"results_economic_gdp{suffix}.txt"
     try:
-        model = create_wine_scheduling_model()
-        solve_model(model, warmstart_path=warmstart_arg)
+        model = create_wine_scheduling_model(toml_file=params_file)
+        solve_model(
+            model,
+            results_path=results_path,
+        )
     except Exception as e:
         print(f"Error: {e}")
         import traceback
